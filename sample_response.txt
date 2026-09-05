@@ -1,0 +1,77 @@
+{
+    "analysis_status": "Assessed",
+    "scope_validation": {
+        "decision": "Facility Issue",
+        "should_analyze": true,
+        "reason": "The image shows a severely damaged and collapsed structure, likely a church, with extensive rubble and debris. The roof is completely destroyed, and the walls are broken, indicating structural instability. The area is unsafe for public access and poses a significant risk of further collapse.",
+        "detected_subjects": [
+            "damaged building",
+            "rubble",
+            "collapsed roof",
+            "broken walls",
+            "debris",
+            "collapsed structure"
+        ]
+    },
+    "assessment": {
+        "category": "Structural and Surface Damage",
+        "summary": "A severely damaged and collapsed building with extensive structural failure, posing a significant safety risk.",
+        "observed_evidence": [
+            "Collapsed roof with exposed framework",
+            "Broken and crumbling walls",
+            "Large pile of rubble and debris",
+            "Visible structural instability"
+        ],
+        "possible_causes": [
+            "Severe structural failure due to earthquake or other natural disaster",
+            "Collapse from overloading or structural decay"
+        ],
+        "safety_indicators": [
+            "Possible immediate danger is visible.",
+            "A possible structural-instability indicator is visible.",
+            "Access or an exit may be blocked.",
+            "The issue may expose a public access area."
+        ],
+        "risk_flags": {
+            "immediate_danger": true,
+            "electrical_exposure": false,
+            "fire_or_smoke_indicator": false,
+            "structural_instability_indicator": true,
+            "active_flooding": false,
+            "blocked_access_or_exit": true,
+            "public_access_exposure": true
+        },
+        "recommended_urgency": "High",
+        "urgency_reasons": [
+            "The building is in a state of imminent danger, with a high risk of further collapse and potential injury to people. Immediate evacuation and structural stabilization are required."
+        ],
+        "estimated_min_hours": 12,
+        "estimated_max_hours": 24,
+        "duration_assumptions": [
+            "Preliminary estimate based on visible scope and report context."
+        ],
+        "analysis_certainty": "High",
+        "needs_review": true,
+        "follow_up_questions": [
+            "Can PPO staff inspect and confirm the affected area?"
+        ],
+        "limitations": [
+            "The image is a clear depiction of a damaged structure, but the exact cause of the damage is not visible. The extent of the damage is visible, but the specific cause is not confirmed."
+        ]
+    },
+    "priority": {
+        "urgency_points": 75,
+        "recurrence_points": 0,
+        "verification_points": 0,
+        "public_exposure_points": 10,
+        "total": 85
+    },
+    "provider": "huggingface",
+    "model_id": "Qwen/Qwen3-VL-2B-Instruct",
+    "prompt_version": "facility-inspection-v5-scope-validation",
+    "original_width": 720,
+    "original_height": 377,
+    "processed_width": 512,
+    "processed_height": 268,
+    "processing_time_ms": 8450
+}

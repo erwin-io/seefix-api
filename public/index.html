@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  />
+
+  <meta
+    name="color-scheme"
+    content="light"
+  />
+
+  <title>SEEFIX Facility Assessment</title>
+
+  <link
+    rel="stylesheet"
+    href="/styles.css"
+  />
+</head>
+
+<body>
+
+  <header class="topbar">
+
+    <div class="brand">
+
+      <div class="brand-mark">
+        SF
+      </div>
+
+      <div>
+        <strong>SEEFIX</strong>
+        <span>Facility Assessment Agent</span>
+      </div>
+
+    </div>
+
+    <a
+      class="health-link"
+      href="/health"
+      target="_blank"
+      rel="noreferrer"
+    >
+      API health
+    </a>
+
+  </header>
+
+
+  <main class="page-shell">
+
+    <!-- =========================================================
+         INTRODUCTION
+    ========================================================== -->
+
+    <section class="intro">
+
+      <p class="eyebrow">
+        AI-assisted facility inspection
+      </p>
+
+      <h1>
+        Upload one facility image and review the assessment.
+      </h1>
+
+      <p class="intro-copy">
+        The agent evaluates visible facility conditions,
+        safety indicators, urgency, estimated work duration,
+        review needs, and maintenance priority.
+      </p>
+
+    </section>
+
+
+    <!-- =========================================================
+         UPLOAD
+    ========================================================== -->
+
+    <section
+      class="upload-card"
+      aria-labelledby="uploadTitle"
+    >
+
+      <div class="section-heading">
+
+        <div>
+          <p class="step-label">
+            Step 1
+          </p>
+
+          <h2 id="uploadTitle">
+            Upload inspection image
+          </h2>
+        </div>
+
+        <span class="file-limit">
+          JPEG, PNG or WebP · max 4 MB
+        </span>
+
+      </div>
+
+
+      <form id="assessmentForm">
+
+        <label
+          id="dropZone"
+          class="drop-zone"
+          for="imageInput"
+        >
+
+          <input
+            id="imageInput"
+            type="file"
+            name="image"
+            accept="image/jpeg,image/png,image/webp"
+            hidden
+          />
+
+
+          <img
+            id="preview"
+            class="image-preview"
+            alt="Selected facility preview"
+            hidden
+          />
+
+
+          <div
+            id="previewPlaceholder"
+            class="preview-placeholder"
+          >
+
+            <div
+              class="upload-icon"
+              aria-hidden="true"
+            >
+              ↑
+            </div>
+
+            <strong>
+              Drop an image here or click to browse
+            </strong>
+
+            <span>
+              Use a clear photo showing the affected facility area.
+            </span>
+
+          </div>
+
+        </label>
+
+
+        <div class="upload-actions">
+
+          <div class="selected-file">
+
+            <span class="selected-file-label">
+              Selected file
+            </span>
+
+            <strong id="fileName">
+              No image selected
+            </strong>
+
+          </div>
+
+
+          <div class="button-row">
+
+            <button
+              id="clearButton"
+              class="button secondary"
+              type="button"
+            >
+              Clear
+            </button>
+
+
+            <button
+              id="analyzeButton"
+              class="button primary"
+              type="submit"
+              disabled
+            >
+
+              <span
+                class="spinner"
+                aria-hidden="true"
+              ></span>
+
+              <span class="button-label">
+                Run assessment
+              </span>
+
+            </button>
+
+          </div>
+
+        </div>
+
+      </form>
+
+
+      <div
+        id="requestStatus"
+        class="request-status"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></div>
+
+    </section>
+
+
+    <!-- =========================================================
+         RESULTS
+    ========================================================== -->
+
+    <section
+      id="results"
+      class="results"
+      aria-labelledby="resultsTitle"
+      hidden
+    >
+
+      <div class="results-heading">
+
+        <div>
+
+          <p class="step-label">
+            Step 2
+          </p>
+
+          <h2 id="resultsTitle">
+            Assessment result
+          </h2>
+
+        </div>
+
+        <span
+          id="analysisStatus"
+          class="status-chip"
+        >
+          —
+        </span>
+
+      </div>
+
+
+      <!-- =======================================================
+           MAIN RESULT
+      ======================================================== -->
+
+      <section class="assessment-hero">
+
+        <div class="hero-copy">
+
+          <p class="field-label">
+            Category
+          </p>
+
+          <h3 id="category">
+            —
+          </h3>
+
+          <p
+            id="summary"
+            class="summary"
+          >
+            —
+          </p>
+
+        </div>
+
+
+        <div class="hero-metrics">
+
+          <div class="metric-card">
+
+            <span>
+              Urgency
+            </span>
+
+            <strong
+              id="urgency"
+              class="metric-badge"
+              data-tone="neutral"
+            >
+              —
+            </strong>
+
+          </div>
+
+
+          <div class="metric-card">
+
+            <span>
+              Priority
+            </span>
+
+            <strong>
+              <span id="priorityScore">—</span>
+              <small>/100</small>
+            </strong>
+
+          </div>
+
+
+          <div class="metric-card">
+
+            <span>
+              Certainty
+            </span>
+
+            <strong
+              id="certainty"
+              class="metric-badge"
+              data-tone="neutral"
+            >
+              —
+            </strong>
+
+          </div>
+
+
+          <div class="metric-card">
+
+            <span>
+              Estimated work
+            </span>
+
+            <strong id="duration">
+              —
+            </strong>
+
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- =======================================================
+           SCOPE VALIDATION
+      ======================================================== -->
+
+      <section class="card scope-card">
+
+        <div class="card-title-row">
+
+          <div>
+
+            <p class="field-label">
+              Scope validation
+            </p>
+
+            <h3 id="scopeDecision">
+              —
+            </h3>
+
+          </div>
+
+          <span
+            id="scopeAnalyzeStatus"
+            class="soft-chip"
+          >
+            —
+          </span>
+
+        </div>
+
+
+        <p
+          id="scopeReason"
+          class="body-copy"
+        >
+          —
+        </p>
+
+
+        <div>
+
+          <p class="field-label compact">
+            Detected subjects
+          </p>
+
+          <div
+            id="detectedSubjects"
+            class="pill-list"
+          ></div>
+
+        </div>
+
+      </section>
+
+
+      <!-- =======================================================
+           OBSERVATIONS + POSSIBLE CAUSES
+      ======================================================== -->
+
+      <div class="two-column-grid">
+
+        <section class="card">
+
+          <div class="card-heading-icon">
+            ✓
+          </div>
+
+          <div>
+
+            <p class="field-label">
+              Observed evidence
+            </p>
+
+            <h3>
+              What the image shows
+            </h3>
+
+          </div>
+
+          <ul
+            id="observedEvidence"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+
+        <section class="card">
+
+          <div class="card-heading-icon">
+            ?
+          </div>
+
+          <div>
+
+            <p class="field-label">
+              Possible causes
+            </p>
+
+            <h3>
+              Potential explanations
+            </h3>
+
+          </div>
+
+          <ul
+            id="possibleCauses"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+      </div>
+
+
+      <!-- =======================================================
+           SAFETY + RISK FLAGS
+      ======================================================== -->
+
+      <div class="two-column-grid">
+
+        <section class="card">
+
+          <p class="field-label">
+            Safety indicators
+          </p>
+
+          <h3>
+            Safety observations
+          </h3>
+
+          <ul
+            id="safetyIndicators"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+
+        <section class="card">
+
+          <p class="field-label">
+            Risk flags
+          </p>
+
+          <h3>
+            Detected / not detected
+          </h3>
+
+          <div
+            id="riskFlags"
+            class="risk-grid"
+          ></div>
+
+        </section>
+
+      </div>
+
+
+      <!-- =======================================================
+           PRIORITY SCORE
+      ======================================================== -->
+
+      <section class="card priority-card">
+
+        <div class="priority-topline">
+
+          <div>
+
+            <p class="field-label">
+              Maintenance priority
+            </p>
+
+            <h3>
+              Priority score breakdown
+            </h3>
+
+          </div>
+
+          <strong
+            id="priorityScoreLarge"
+            class="priority-total"
+          >
+            —
+          </strong>
+
+        </div>
+
+
+        <div
+          id="priorityTrack"
+          class="priority-track"
+          role="progressbar"
+          aria-label="Priority score"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <span id="priorityBar"></span>
+        </div>
+
+
+        <div class="score-grid">
+
+          <div>
+
+            <span>
+              Urgency
+            </span>
+
+            <strong id="urgencyPoints">
+              0
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Recurrence
+            </span>
+
+            <strong id="recurrencePoints">
+              0
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Verification
+            </span>
+
+            <strong id="verificationPoints">
+              0
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Public exposure
+            </span>
+
+            <strong id="publicExposurePoints">
+              0
+            </strong>
+
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- =======================================================
+           URGENCY + DURATION
+      ======================================================== -->
+
+      <div class="two-column-grid">
+
+        <section class="card emphasis-card">
+
+          <p class="field-label">
+            Urgency rationale
+          </p>
+
+          <h3>
+            Why this urgency was recommended
+          </h3>
+
+          <ul
+            id="urgencyReasons"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+
+        <section class="card">
+
+          <p class="field-label">
+            Work estimate
+          </p>
+
+          <h3>
+            Duration assumptions
+          </h3>
+
+          <ul
+            id="durationAssumptions"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+      </div>
+
+
+      <!-- =======================================================
+           REVIEW + LIMITATIONS
+      ======================================================== -->
+
+      <div class="two-column-grid">
+
+        <section class="card">
+
+          <div class="card-title-row">
+
+            <div>
+
+              <p class="field-label">
+                Human review
+              </p>
+
+              <h3 id="reviewStatus">
+                —
+              </h3>
+
+            </div>
+
+          </div>
+
+
+          <p class="subsection-label">
+            Follow-up questions
+          </p>
+
+          <ul
+            id="followUpQuestions"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+
+        <section class="card">
+
+          <p class="field-label">
+            Assessment limitations
+          </p>
+
+          <h3>
+            What still needs confirmation
+          </h3>
+
+          <ul
+            id="limitations"
+            class="detail-list"
+          ></ul>
+
+        </section>
+
+      </div>
+
+
+      <!-- =======================================================
+           TECHNICAL DETAILS
+      ======================================================== -->
+
+      <details class="technical-details">
+
+        <summary>
+          Technical assessment details
+        </summary>
+
+
+        <div class="technical-grid">
+
+          <div>
+
+            <span>
+              Provider
+            </span>
+
+            <strong id="provider">
+              —
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Model
+            </span>
+
+            <strong id="modelId">
+              —
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Prompt version
+            </span>
+
+            <strong id="promptVersion">
+              —
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Processing time
+            </span>
+
+            <strong id="processingTime">
+              —
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Original image
+            </span>
+
+            <strong id="originalDimensions">
+              —
+            </strong>
+
+          </div>
+
+
+          <div>
+
+            <span>
+              Processed image
+            </span>
+
+            <strong id="processedDimensions">
+              —
+            </strong>
+
+          </div>
+
+        </div>
+
+      </details>
+
+    </section>
+
+  </main>
+
+
+  <footer>
+    AI-assisted assessment should support, not replace,
+    qualified on-site inspection and maintenance decisions.
+  </footer>
+
+
+  <script
+    src="/app.js"
+    defer
+  ></script>
+
+</body>
+</html>

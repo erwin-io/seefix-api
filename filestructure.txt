@@ -3,7 +3,13 @@
 |-- LICENSE
 |-- package-lock.json
 |-- package.json
+|-- public
+    |-- app.js
+    |-- index.html
+    |-- styles.css
 |-- README.md
+|-- sample_response.txt
+|-- seefix-api_export_node_20260906_051659.txt
 |-- server.js
 |-- src
     |-- agent-client.js
