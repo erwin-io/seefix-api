@@ -58,6 +58,31 @@ export class AgentClientError extends Error {
 |--------------------------------------------------------------------------
 | Provider Resolution
 |--------------------------------------------------------------------------
+|
+| Current SEEFIX architecture:
+|
+| Local development:
+|
+|   Node
+|     ↓
+|   http://127.0.0.1:8000
+|     ↓
+|   FastAPI
+|     ↓
+|   Ollama / Qwen
+|
+| Vercel:
+|
+|   Vercel
+|     ↓
+|   Cloudflare Tunnel
+|     ↓
+|   local FastAPI
+|     ↓
+|   Ollama / Qwen
+|
+| Hugging Face support remains available only when explicitly selected.
+|
 */
 
 export function resolveAgentProvider(
@@ -90,6 +115,10 @@ export function resolveAgentProvider(
   }
 
 
+  /*
+   * Explicit provider always wins.
+   */
+
   if (
     configured !== "auto"
   ) {
@@ -100,16 +129,14 @@ export function resolveAgentProvider(
 
 
   /*
-   * Local computer:
-   *     local FastAPI/Ollama
+   * SEEFIX now uses the local FastAPI/Ollama
+   * agent as the default provider everywhere.
    *
-   * Vercel:
-   *     Hugging Face Space
+   * On Vercel, LOCAL_AGENT_URL must point to
+   * the public Cloudflare Tunnel URL.
    */
 
-  return environment.VERCEL
-    ? "huggingface"
-    : "local";
+  return "local";
 
 }
 
@@ -144,14 +171,220 @@ function positiveInteger(
 }
 
 
+/*
+|--------------------------------------------------------------------------
+| Normalize URL
+|--------------------------------------------------------------------------
+*/
+
 function normalizeBaseUrl(
   url,
 ) {
 
-  return url.replace(
-    /\/+$/,
-    "",
+  return String(
+    url || "",
+  )
+    .trim()
+    .replace(
+      /\/+$/,
+      "",
+    );
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Resolve Local Agent URL
+|--------------------------------------------------------------------------
+*/
+
+function resolveLocalAgentBaseUrl(
+  environment,
+) {
+
+  const configuredUrl =
+    environment
+      .LOCAL_AGENT_URL
+      ?.trim();
+
+
+  /*
+   * Vercel cannot use its own 127.0.0.1 to
+   * reach your Windows PC.
+   *
+   * A public Cloudflare Tunnel URL must be
+   * configured.
+   */
+
+  if (
+    environment.VERCEL &&
+    !configuredUrl
+  ) {
+
+    throw new AgentClientError(
+      "LOCAL_AGENT_URL is required on Vercel. "
+      +
+      "Set it to the public Cloudflare Tunnel URL.",
+      {
+        code:
+          "CONFIGURATION_ERROR",
+      },
+    );
+
+  }
+
+
+  return normalizeBaseUrl(
+    configuredUrl ||
+    "http://127.0.0.1:8000",
   );
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Local Agent Secret
+|--------------------------------------------------------------------------
+|
+| Python FastAPI expects:
+|
+|   X-SEEFIX-AGENT-KEY
+|
+| The browser must NEVER receive this secret.
+|
+| It is stored only in:
+|
+|   Python:
+|       SEEFIX_AGENT_API_KEY
+|
+|   Vercel:
+|       LOCAL_AGENT_SECRET
+|
+*/
+
+function requireLocalAgentSecret(
+  environment,
+) {
+
+  const secret =
+    environment
+      .LOCAL_AGENT_SECRET
+      ?.trim();
+
+
+  if (!secret) {
+
+    throw new AgentClientError(
+      "LOCAL_AGENT_SECRET is required when using the local SEEFIX agent.",
+      {
+        code:
+          "CONFIGURATION_ERROR",
+      },
+    );
+
+  }
+
+
+  return secret;
+
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Build Local Agent Headers
+|--------------------------------------------------------------------------
+|
+| X-SEEFIX-AGENT-KEY:
+|     Protects FastAPI itself.
+|
+| CF-Access-*:
+|     Optional.
+|
+|     These can be enabled later when the permanent
+|     Cloudflare Tunnel is protected with Cloudflare Access.
+|
+*/
+
+function buildLocalAgentHeaders(
+  environment,
+) {
+
+  const secret =
+    requireLocalAgentSecret(
+      environment,
+    );
+
+
+  const headers = {
+
+    "X-SEEFIX-AGENT-KEY":
+      secret,
+
+  };
+
+
+  const cloudflareClientId =
+    environment
+      .CLOUDFLARE_ACCESS_CLIENT_ID
+      ?.trim();
+
+
+  const cloudflareClientSecret =
+    environment
+      .CLOUDFLARE_ACCESS_CLIENT_SECRET
+      ?.trim();
+
+
+  /*
+   * Prevent half-configured Cloudflare Access.
+   */
+
+  if (
+    Boolean(
+      cloudflareClientId,
+    )
+    !==
+    Boolean(
+      cloudflareClientSecret,
+    )
+  ) {
+
+    throw new AgentClientError(
+      "Both CLOUDFLARE_ACCESS_CLIENT_ID and "
+      +
+      "CLOUDFLARE_ACCESS_CLIENT_SECRET must be configured together.",
+      {
+        code:
+          "CONFIGURATION_ERROR",
+      },
+    );
+
+  }
+
+
+  if (
+    cloudflareClientId &&
+    cloudflareClientSecret
+  ) {
+
+    headers[
+      "CF-Access-Client-Id"
+    ] =
+      cloudflareClientId;
+
+
+    headers[
+      "CF-Access-Client-Secret"
+    ] =
+      cloudflareClientSecret;
+
+  }
+
+
+  return headers;
 
 }
 
@@ -171,7 +404,8 @@ function getErrorDetail(
   let current =
     error;
 
-  let depth = 0;
+  let depth =
+    0;
 
 
   while (
@@ -217,7 +451,9 @@ function getErrorDetail(
 
 
   return [
-    ...new Set(parts),
+    ...new Set(
+      parts,
+    ),
   ].join(
     " | ",
   );
@@ -293,6 +529,9 @@ function timeoutAfter(
 |--------------------------------------------------------------------------
 | Hugging Face Authentication
 |--------------------------------------------------------------------------
+|
+| Legacy provider support only.
+|
 */
 
 function requireHuggingFaceToken(
@@ -308,7 +547,7 @@ function requireHuggingFaceToken(
   if (!token) {
 
     throw new AgentClientError(
-      "HF_TOKEN is required when using the Hugging Face ZeroGPU agent.",
+      "HF_TOKEN is required when using the Hugging Face agent.",
       {
         code:
           "CONFIGURATION_ERROR",
@@ -353,7 +592,7 @@ let connectedSpaceId;
 
 /*
 |--------------------------------------------------------------------------
-| Clear Cached Client
+| Clear Cached Hugging Face Client
 |--------------------------------------------------------------------------
 */
 
@@ -392,22 +631,8 @@ async function getHuggingFaceClient(
       Client.connect(
         spaceId,
         {
-
-          /*
-           * @gradio/client 2.5.1
-           *
-           * The project currently uses:
-           *
-           * "@gradio/client": "2.5.1"
-           *
-           * Version 2.5.1 supports hf_token.
-           *
-           * This is important for ZeroGPU.
-           */
-
           hf_token:
             hfToken,
-
         },
       )
         .catch(
@@ -430,8 +655,21 @@ async function getHuggingFaceClient(
 
 /*
 |--------------------------------------------------------------------------
-| Local Agent
+| Local / Cloudflare FastAPI Analysis
 |--------------------------------------------------------------------------
+|
+| Local Node development:
+|
+|   LOCAL_AGENT_URL=http://127.0.0.1:8000
+|
+| Vercel:
+|
+|   LOCAL_AGENT_URL=https://xxxxx.trycloudflare.com
+|
+| or later:
+|
+|   LOCAL_AGENT_URL=https://agent.your-domain.com
+|
 */
 
 async function analyzeWithLocalAgent(
@@ -441,10 +679,14 @@ async function analyzeWithLocalAgent(
 ) {
 
   const baseUrl =
-    normalizeBaseUrl(
-      environment
-        .LOCAL_AGENT_URL ||
-      "http://127.0.0.1:8000",
+    resolveLocalAgentBaseUrl(
+      environment,
+    );
+
+
+  const headers =
+    buildLocalAgentHeaders(
+      environment,
     );
 
 
@@ -494,6 +736,8 @@ async function analyzeWithLocalAgent(
           method:
             "POST",
 
+          headers,
+
           body:
             form,
 
@@ -528,7 +772,7 @@ async function analyzeWithLocalAgent(
 
       const message =
         payload?.detail ||
-        `Local agent returned HTTP ${response.status}.`;
+        `SEEFIX FastAPI agent returned HTTP ${response.status}.`;
 
 
       throw new AgentClientError(
@@ -536,6 +780,11 @@ async function analyzeWithLocalAgent(
         {
           code:
             "LOCAL_AGENT_RESPONSE_ERROR",
+
+          upstreamDetail:
+            JSON.stringify(
+              payload,
+            ),
         },
       );
 
@@ -560,11 +809,11 @@ async function analyzeWithLocalAgent(
 
     if (
       error?.name ===
-      "AbortError"
+        "AbortError"
     ) {
 
       throw new AgentClientError(
-        `Local agent exceeded the ${Math.ceil(
+        `SEEFIX FastAPI agent exceeded the ${Math.ceil(
           timeoutMs / 1000,
         )}-second timeout.`,
         {
@@ -580,7 +829,7 @@ async function analyzeWithLocalAgent(
 
 
     throw new AgentClientError(
-      `Unable to reach the local agent at ${baseUrl}. Start FastAPI/Ollama first.`,
+      `Unable to reach the SEEFIX FastAPI agent at ${baseUrl}.`,
       {
         code:
           "AGENT_UNAVAILABLE",
@@ -610,6 +859,9 @@ async function analyzeWithLocalAgent(
 |--------------------------------------------------------------------------
 | Hugging Face Analysis
 |--------------------------------------------------------------------------
+|
+| Kept only as an optional legacy provider.
+|
 */
 
 async function analyzeWithHuggingFace(
@@ -627,11 +879,6 @@ async function analyzeWithHuggingFace(
       .trim();
 
 
-  /*
-   * Do not make anonymous ZeroGPU
-   * requests from Vercel.
-   */
-
   const hfToken =
     requireHuggingFaceToken(
       environment,
@@ -639,10 +886,6 @@ async function analyzeWithHuggingFace(
 
 
   try {
-
-    /*
-     * Connect to the Space.
-     */
 
     const client =
       await timeoutAfter(
@@ -656,17 +899,6 @@ async function analyzeWithHuggingFace(
         "Hugging Face",
       );
 
-
-    /*
-     * Preserve:
-     *
-     * - image bytes
-     * - MIME type
-     * - filename
-     *
-     * File works better than sending an
-     * anonymous Blob directly.
-     */
 
     const imageFile =
       new File(
@@ -685,17 +917,6 @@ async function analyzeWithHuggingFace(
       );
 
 
-    /*
-     * IMPORTANT:
-     *
-     * Gradio image inputs use FileData
-     * internally.
-     *
-     * handle_file() uploads the file and
-     * converts it to the structure expected
-     * by the remote Gradio application.
-     */
-
     const result =
       await timeoutAfter(
 
@@ -713,10 +934,6 @@ async function analyzeWithHuggingFace(
         "Hugging Face",
       );
 
-
-    /*
-     * Validate Gradio response.
-     */
 
     if (
       !result ||
@@ -737,19 +954,11 @@ async function analyzeWithHuggingFace(
     }
 
 
-    /*
-     * gr.JSON output is the first output.
-     */
-
     return result.data[0];
 
   } catch (
     error
   ) {
-
-    /*
-     * Preserve our own known errors.
-     */
 
     if (
       error instanceof
@@ -760,13 +969,6 @@ async function analyzeWithHuggingFace(
 
     }
 
-
-    /*
-     * Space may restart/rebuild/sleep.
-     *
-     * Never keep a stale connection after
-     * an upstream failure.
-     */
 
     clearHuggingFaceClient();
 
@@ -797,7 +999,7 @@ async function analyzeWithHuggingFace(
 
 /*
 |--------------------------------------------------------------------------
-| Local Health Probe
+| Local / Cloudflare FastAPI Health Probe
 |--------------------------------------------------------------------------
 */
 
@@ -807,10 +1009,23 @@ async function probeLocalAgent(
 ) {
 
   const baseUrl =
-    normalizeBaseUrl(
-      environment
-        .LOCAL_AGENT_URL ||
-      "http://127.0.0.1:8000",
+    resolveLocalAgentBaseUrl(
+      environment,
+    );
+
+
+  /*
+   * FastAPI /health is currently public,
+   * but sending the agent header here makes this
+   * compatible if /health is protected later.
+   *
+   * It also allows the same optional Cloudflare
+   * Access service-token headers.
+   */
+
+  const headers =
+    buildLocalAgentHeaders(
+      environment,
     );
 
 
@@ -835,6 +1050,11 @@ async function probeLocalAgent(
       await fetch(
         `${baseUrl}/health`,
         {
+          method:
+            "GET",
+
+          headers,
+
           signal:
             controller.signal,
         },
@@ -864,15 +1084,81 @@ async function probeLocalAgent(
       !response.ok
     ) {
 
-      throw new Error(
+      throw new AgentClientError(
         payload?.detail ||
-        `HTTP ${response.status}`,
+        `FastAPI health endpoint returned HTTP ${response.status}.`,
+        {
+          code:
+            "LOCAL_AGENT_RESPONSE_ERROR",
+
+          upstreamDetail:
+            JSON.stringify(
+              payload,
+            ),
+        },
       );
 
     }
 
 
-    return payload;
+    return {
+      url:
+        baseUrl,
+
+      response:
+        payload,
+    };
+
+  } catch (
+    error
+  ) {
+
+    if (
+      error instanceof
+        AgentClientError
+    ) {
+
+      throw error;
+
+    }
+
+
+    if (
+      error?.name ===
+        "AbortError"
+    ) {
+
+      throw new AgentClientError(
+        `SEEFIX agent health check exceeded ${Math.ceil(
+          timeoutMs / 1000,
+        )} seconds.`,
+        {
+          code:
+            "AGENT_TIMEOUT",
+
+          cause:
+            error,
+        },
+      );
+
+    }
+
+
+    throw new AgentClientError(
+      `Unable to reach the SEEFIX FastAPI agent at ${baseUrl}.`,
+      {
+        code:
+          "AGENT_UNAVAILABLE",
+
+        cause:
+          error,
+
+        upstreamDetail:
+          getErrorDetail(
+            error,
+          ),
+      },
+    );
 
   } finally {
 
@@ -888,16 +1174,6 @@ async function probeLocalAgent(
 /*
 |--------------------------------------------------------------------------
 | Hugging Face Health Probe
-|--------------------------------------------------------------------------
-|
-| Your Space already has:
-|
-|     gr.api(
-|         health_check,
-|         api_name="health",
-|     )
-|
-| This call does NOT request ZeroGPU.
 |--------------------------------------------------------------------------
 */
 
@@ -1063,12 +1339,6 @@ export async function probeAgent(
       environment,
     );
 
-
-  /*
-   * Health check should fail quickly.
-   *
-   * This does not run image inference.
-   */
 
   const timeoutMs =
     positiveInteger(
