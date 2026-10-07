@@ -1,117 +1,69 @@
-# SEEFIX API
+# SEEFIX API — Node.js / Express Business API
 
-Express API gateway for the SEEFIX facility inspection agent. Applications make one multipart request to this API regardless of where the AI agent runs.
+This is the business API for **SEEFIX — Smart AI Maintenance Prioritization System**. The previous browser assessment UI and raw `/api/analyze` gateway were removed. Reporter/PPO/Procurement/maintenance clients use this JSON API; AI work is performed by the protected `seefix-agents` FastAPI service.
 
-## Request flow
+## Final runtime
 
-- Local development: Express forwards the image to the local FastAPI/Ollama endpoint.
-- Vercel production: Express sends the image to the Hugging Face Gradio Space.
-- Client contract: `POST /api/analyze` with one `image` file in both environments.
-
-`AGENT_PROVIDER=auto` performs the environment switch. It selects `local` normally and `huggingface` when the `VERCEL` environment variable is present.
-
-## Requirements
-
-- Node.js 20 or newer
-- For local AI inference, the SEEFIX Python agent running at `http://127.0.0.1:8000`
-
-## Local setup
-
-```cmd
-npm install
-copy .env.example .env
-npm run dev
+```text
+Reporter Mobile / PPO / Procurement clients
+                    ↓
+            Node.js / Express
+        JWT + RBAC + business rules
+                    ↓
+          PostgreSQL dbo schema
+                    ↕
+            seefix-agents
+                    ↓
+             Ollama / Qwen
 ```
 
-Keep this setting in `.env`:
+A new Report is persisted with its Cloudinary `ReportImages` records first. Only after commit does Node call `POST /api/reports/{id}/process`. If that HTTP trigger fails, the Report remains `AgentStatus=PENDING` and the Python `ReportWorker` will still claim it from PostgreSQL.
 
-```dotenv
-AGENT_PROVIDER=auto
-LOCAL_AGENT_URL=http://127.0.0.1:8000
-```
+## Setup
 
-Start the Python agent separately on port 8000. Express runs on port 3000.
+1. Copy `.env.example` to `.env` and fill your local credentials. Use the same PostgreSQL database and the same Node→Agent shared secret as `seefix-agents`.
+2. Install:
+   `npm install`
+3. Verify syntax/tests/database:
+   `npm run check`
+   `npm test`
+   `npm run verify:db`
+4. Run:
+   `npm start`
 
-## One-call test
+No static web UI is served.
 
-Windows Command Prompt:
+## Main API groups
 
-```cmd
-curl --location "http://127.0.0.1:3000/api/analyze" ^
-  --form "image=@C:\Users\Erwin\Downloads\sample.jpeg"
-```
+- `/api/auth` — Reporter registration/login and current user.
+- `/api/reports` — Reporter submission, list/detail, independent verification, Agent state.
+- `/api/notifications` — persistent mobile/web notifications.
+- `/api/ppo` — PPO action center, report verification + maintenance authorization, clarification response, Work Order confirmation/completion/rework.
+- `/api/procurement` — inbox, acknowledge/start, clarifications, final Procurement Outcome.
+- `/api/work-orders` — execution, status/progress, people, materials, completion evidence and completion-agent state.
+- `/api/admin` — basic user management.
 
-PowerShell:
+## Important human gates
 
-```powershell
-curl.exe --location "http://127.0.0.1:3000/api/analyze" `
-  --form "image=@C:\Users\Erwin\Downloads\sample.jpeg"
-```
+Node intentionally owns the human-authorized writes that the Agent must never perform:
 
-Postman configuration:
+- PPO Staff: FinalCategory/FinalUrgency review + Maintenance Request authorization.
+- Procurement: final outcome metadata only; bidding/provider selection stays outside SEEFIX.
+- PPO Head: Work Order confirmation.
+- Responsible maintenance party/PPO: start/progress/completion submission.
+- PPO Head: Confirm Complete or Require Rework.
 
-1. Method: `POST`
-2. URL: `http://127.0.0.1:3000/api/analyze`
-3. Body → `form-data`
-4. Key: `image`, type: File
-5. Select the image and send the request.
+The Agent provides inspection, drafts, deterministic policy/knowledge, Procurement clarification drafts, Work Order readiness/variance, and before/after completion assistance.
 
-Do not manually add a `Content-Type` header; Postman/curl supplies the multipart boundary.
+## Report upload (mobile-ready)
 
-## Test the hosted agent through local Express
+`POST /api/reports` with Bearer JWT and `multipart/form-data`:
 
-Set this temporarily in `.env` and restart Node:
+- `images` — one or more JPEG/PNG/WebP files (required)
+- `description`, `notes`, `building`, `floor`, `roomOrArea`, `gpsLat`, `gpsLng` — optional
 
-```dotenv
-AGENT_PROVIDER=huggingface
-HF_SPACE_ID=erwinramirez220/seefix-agents
-```
+The API uploads evidence to Cloudinary and writes `Reports` + `ReportImages` in one PostgreSQL transaction.
 
-Use the same `POST /api/analyze` request. Set it back to `auto` for ordinary development.
+## Security
 
-## Deploy to Vercel
-
-1. Push this project to GitHub.
-2. Import the repository into Vercel as a new project.
-3. Use the default framework detection and build settings.
-4. Add these environment variables in Vercel Project Settings → Environment Variables:
-
-```dotenv
-AGENT_PROVIDER=auto
-HF_SPACE_ID=erwinramirez220/seefix-agents
-AGENT_TIMEOUT_MS=240000
-MAX_UPLOAD_MB=4
-```
-
-5. Deploy. Vercel sets `VERCEL=1`, so `auto` selects Hugging Face.
-
-Production test:
-
-```cmd
-curl --location "https://YOUR-PROJECT.vercel.app/api/analyze" ^
-  --form "image=@C:\Users\Erwin\Downloads\sample.jpeg"
-```
-
-The Hugging Face Space is public, so no access token is required. If it is changed to private later, authenticated client support must be added before deployment.
-
-## API responses
-
-| Status | Meaning |
-| --- | --- |
-| `200` | Assessment returned |
-| `400` | Missing image or invalid multipart request |
-| `413` | File is larger than the configured limit |
-| `415` | Unsupported image format |
-| `502` | Agent returned an error or invalid response |
-| `503` | Local agent is not reachable |
-| `504` | Agent processing exceeded the timeout |
-
-The Vercel upload limit is 4.5 MB for the entire request body. `MAX_UPLOAD_MB=4` leaves room for multipart overhead. Compress larger mobile photos before uploading. For larger originals in the complete system, upload the image directly to object storage and pass a signed URL to a separate protected agent endpoint.
-
-## Health check
-
-```cmd
-curl "http://127.0.0.1:3000/health"
-```
-
-Local automatic mode returns `"agent_provider":"local"`. A Vercel deployment returns `"agent_provider":"huggingface"`.
+Do not commit `.env`. The project never exposes `LOCAL_AGENT_SECRET` to mobile clients. Rotate any secret previously included in exported source files. Use strong JWT and Agent secrets in production and TLS for remote API/database traffic.

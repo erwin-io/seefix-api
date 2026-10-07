@@ -1,6 +1,6 @@
 {
   "name": "seefix-api",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,13 +9,20 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "check": "node --check server.js && node --check src/agent-client.js",
-    "test": "node --test"
+    "check": "node scripts/check-syntax.js",
+    "test": "node --test",
+    "verify:db": "node scripts/verify-database-contract.js",
+    "test:hardening": "node --test tests/backend-hardening.test.js",
+    "test:rbac": "node scripts/rbac-acceptance.js"
   },
   "dependencies": {
-    "@gradio/client": "2.5.1",
-    "dotenv": "^16.4.7",
-    "express": "^5.1.0",
-    "multer": "^2.0.0"
+    "bcryptjs": "^3.0.2",
+    "cloudinary": "^2.7.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "pg": "^8.16.3"
   }
 }

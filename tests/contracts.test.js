@@ -1,0 +1,7 @@
+import test from "node:test";import assert from "node:assert/strict";import fs from "node:fs";
+const agent=fs.readFileSync(new URL("../src/agent-client.js",import.meta.url),"utf8");const app=fs.readFileSync(new URL("../src/app.js",import.meta.url),"utf8");const ppo=fs.readFileSync(new URL("../src/routes/ppo.js",import.meta.url),"utf8");const procurement=fs.readFileSync(new URL("../src/routes/procurement.js",import.meta.url),"utf8");const work=fs.readFileSync(new URL("../src/routes/work-orders.js",import.meta.url),"utf8");
+test("old raw image analyze endpoint is removed",()=>{assert.equal(agent.includes("/api/analyze"),false);assert.equal(app.includes("express.static"),false);});
+test("agent report contract uses persisted report id",()=>{assert.match(agent,/\/api\/reports\/\$\{id\}\/process/);assert.match(agent,/maintenance-request\/generate/);});
+test("PPO human authority writes final classification and authorization",()=>{assert.match(ppo,/FinalCategory/);assert.match(ppo,/AuthorizedBy/);assert.match(ppo,/PENDING_CONFIRMATION/);});
+test("Procurement code records outcome but contains no bidder ranking",()=>{assert.match(procurement,/ProcurementOutcomes/);assert.equal(/bidder|vendor ranking|quotation comparison/i.test(procurement),false);});
+test("completion is human closed by PPO route and agent is assistance",()=>{assert.match(work,/COMPLETION_SUBMITTED/);assert.match(ppo,/CompletedBy/);assert.match(agent,/completion\/process/);});

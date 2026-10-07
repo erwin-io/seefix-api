@@ -1,18 +1,47 @@
+|-- .env
 |-- .env.example
 |-- .gitignore
+|-- docs
+    |-- API_ENDPOINTS.md
+    |-- IMPLEMENTATION_STATUS.md
 |-- LICENSE
 |-- package-lock.json
 |-- package.json
-|-- public
-    |-- app.js
-    |-- index.html
-    |-- styles.css
 |-- README.md
-|-- seefix-api_export_node_20260906_061808.txt
+|-- run_windows.bat
+|-- scripts
+    |-- check-syntax.js
+    |-- verify-database-contract.js
+|-- seefix-api_export_node_20261007_062223.txt
 |-- server.js
 |-- src
     |-- agent-client.js
-|-- test
-    |-- local-forwarding.test.js
-    |-- provider-selection.test.js
+    |-- app.js
+    |-- cloudinary.js
+    |-- config.js
+    |-- database.js
+    |-- errors.js
+    |-- middleware
+        |-- auth.js
+        |-- errors.js
+    |-- routes
+        |-- admin-knowledge.js
+        |-- admin.js
+        |-- auth.js
+        |-- notifications.js
+        |-- ppo.js
+        |-- procurement.js
+        |-- reports.js
+        |-- work-orders.js
+    |-- services
+        |-- notifications.js
+        |-- procurement-service.js
+        |-- report-service.js
+        |-- settings.js
+        |-- work-order-service.js
+    |-- uploads.js
+    |-- utils
+        |-- objects.js
+|-- tests
+    |-- contracts.test.js
 |-- vercel.json
