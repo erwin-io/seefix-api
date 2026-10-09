@@ -81,7 +81,21 @@ export async function createNotification(
     ],
   );
 
-  return result.rows[0] || null;
+  const created = result.rows[0] || null;
+  if (created) {
+    // Durable realtime signal in the same transaction: rolled back with the notification,
+    // delivered by the OutboxEvents dispatcher after commit. Payload carries ids only.
+    await insertOutbox(client, {
+      aggregateType: "NOTIFICATION",
+      aggregateId: created.id,
+      transport: "PUSHER",
+      recipientUserId: userId,
+      eventName: "notification.created",
+      payload: { notificationId: created.id, type: created.type, entityType: created.entityType, entityId: created.entityId },
+      deduplicationKey: `notification:${created.id}:created`,
+    });
+  }
+  return created;
 }
 
 export async function notifyRole(

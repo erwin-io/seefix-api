@@ -158,6 +158,20 @@ export const config = Object.freeze({
     24,
     1,
   ),
+
+  // Realtime (optional). Empty PUSHER_* = disabled: OutboxEvents rows stay PENDING, clients poll.
+  pusherAppId: String(process.env.PUSHER_APP_ID || "").trim(),
+  pusherKey: String(process.env.PUSHER_KEY || "").trim(),
+  pusherSecret: String(process.env.PUSHER_SECRET || ""),
+  pusherCluster: String(process.env.PUSHER_CLUSTER || "").trim(),
+  // OutboxEvents -> Pusher dispatcher, started by server.js (or `npm run outbox:dispatch` as a separate worker).
+  outboxDispatcherEnabled: String(process.env.OUTBOX_DISPATCHER || "auto").trim().toLowerCase() !== "off",
+  outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
+  outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 25, 1),
+  outboxMaxAttempts: intEnv("OUTBOX_MAX_ATTEMPTS", 8, 1),
+  outboxLeaseSeconds: intEnv("OUTBOX_LEASE_SECONDS", 60, 5),
+  outboxBackoffBaseMs: intEnv("OUTBOX_BACKOFF_BASE_MS", 2000, 100),
+  outboxBackoffMaxMs: intEnv("OUTBOX_BACKOFF_MAX_MS", 600000, 1000),
 });
 
 export function validateRuntimeConfig() {

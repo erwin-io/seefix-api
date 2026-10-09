@@ -13,7 +13,8 @@
     "test": "node --test",
     "verify:db": "node scripts/verify-database-contract.js",
     "test:hardening": "node --test tests/backend-hardening.test.js",
-    "test:rbac": "node scripts/rbac-acceptance.js"
+    "test:rbac": "node scripts/rbac-acceptance.js",
+    "outbox:dispatch": "node scripts/outbox-dispatch.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -24,8 +25,9 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
+    "nodemailer": "^7.0.6",
     "pg": "^8.16.3",
-    "nodemailer": "^7.0.6"
+    "pusher": "^5.2.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
