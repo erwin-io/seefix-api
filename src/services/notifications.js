@@ -5,6 +5,8 @@
  * Notifications.Payload and protected with a transaction-scoped advisory lock.
  */
 
+import { publishToUser } from "../realtime.js";
+
 function payloadWithDedupe(payload, deduplicationKey) {
   return deduplicationKey
     ? { ...(payload || {}), deduplicationKey }
@@ -81,7 +83,9 @@ export async function createNotification(
     ],
   );
 
-  return result.rows[0] || null;
+  const created = result.rows[0] || null;
+  if (created) (client.afterCommit ??= []).push(() => publishToUser(userId, "notification.created", { id: created.id, type: created.type }));
+  return created;
 }
 
 export async function notifyRole(

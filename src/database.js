@@ -35,8 +35,11 @@ export async function withTransaction(userId, callback) {
     if (userId) await client.query("SELECT set_config('app.user_id', $1, true)", [String(userId)]);
     const result = await callback(client);
     await client.query("COMMIT");
+    // Side effects (e.g. realtime pushes) queued by helpers run only after a successful commit.
+    for (const hook of client.afterCommit?.splice(0) ?? []) hook();
     return result;
   } catch (error) {
+    client.afterCommit = [];
     await client.query("ROLLBACK");
     throw error;
   } finally {

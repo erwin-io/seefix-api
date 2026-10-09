@@ -66,6 +66,10 @@ export const config = Object.freeze({
   smtpUser: String(process.env.SMTP_USER || '').trim(),
   smtpPass: String(process.env.SMTP_PASS || ''),
   smtpFrom: String(process.env.SMTP_FROM || '').trim(),
+  pusherAppId: String(process.env.PUSHER_APP_ID || '').trim(),
+  pusherKey: String(process.env.PUSHER_KEY || '').trim(),
+  pusherSecret: String(process.env.PUSHER_SECRET || ''),
+  pusherCluster: String(process.env.PUSHER_CLUSTER || '').trim(),
 
   jwtExpiresIn: String(
     process.env.JWT_EXPIRES_IN || "7d",
