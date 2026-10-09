@@ -1,69 +1,112 @@
 # SEEFIX API — Node.js / Express Business API
 
-This is the business API for **SEEFIX — Smart AI Maintenance Prioritization System**. The previous browser assessment UI and raw `/api/analyze` gateway were removed. Reporter/PPO/Procurement/maintenance clients use this JSON API; AI work is performed by the protected `seefix-agents` FastAPI service.
+SEEFIX is an AI-assisted maintenance prioritization and workflow system. This service is the authenticated business API between the Reporter/Maintenance/Procurement/Worker clients, PostgreSQL, Cloudinary, and the protected `seefix-agents` FastAPI service.
 
-## Final runtime
+## Current workflow
 
 ```text
-Reporter Mobile / PPO / Procurement clients
-                    ↓
-            Node.js / Express
-        JWT + RBAC + business rules
-                    ↓
-          PostgreSQL dbo schema
-                    ↕
-            seefix-agents
-                    ↓
-             Ollama / Qwen
+Reporter submits report + images
+        ↓
+SEEFIX Agent assessment
+        ↓
+Deterministic priority / triage queue
+        ↓
+Maintenance Review
+        ├── INTERNAL
+        │      ↓
+        │   Work Order PENDING_ASSIGNMENT
+        │      ↓
+        │   human assignment / dispatch
+        │
+        ├── PROCUREMENT
+        │      ↓
+        │   Procurement handoff
+        │      ↓
+        │   UC Procurement process outside SEEFIX
+        │      ↓
+        │   Procurement Outcome
+        │      ↓
+        │   Work Order PENDING_ASSIGNMENT
+        │      ↓
+        │   human assignment / dispatch
+        │
+        ├── NO_ACTION
+        └── DUPLICATE
+
+ASSIGNED → IN_PROGRESS → completion evidence
+        ↓
+AI completion assistance
+        ↓
+Maintenance Supervisor COMPLETE or REWORK
 ```
 
-A new Report is persisted with its Cloudinary `ReportImages` records first. Only after commit does Node call `POST /api/reports/{id}/process`. If that HTTP trigger fails, the Report remains `AgentStatus=PENDING` and the Python `ReportWorker` will still claim it from PostgreSQL.
+AI assesses, prioritizes, drafts, compares, warns, and monitors. Human-authorized roles own routing, assignment, Procurement decisions, work execution, and final completion acceptance.
 
-## Setup
+## Roles
 
-1. Copy `.env.example` to `.env` and fill your local credentials. Use the same PostgreSQL database and the same Node→Agent shared secret as `seefix-agents`.
-2. Install:
-   `npm install`
-3. Verify syntax/tests/database:
-   `npm run check`
-   `npm test`
-   `npm run verify:db`
-4. Run:
-   `npm start`
-
-No static web UI is served.
+- `REPORTER`
+- `MAINTENANCE_STAFF`
+- `MAINTENANCE_SUPERVISOR`
+- `PROCUREMENT`
+- `WORKER`
+- `ADMIN`
 
 ## Main API groups
 
-- `/api/auth` — Reporter registration/login and current user.
-- `/api/reports` — Reporter submission, list/detail, independent verification, Agent state.
-- `/api/notifications` — persistent mobile/web notifications.
-- `/api/ppo` — PPO action center, report verification + maintenance authorization, clarification response, Work Order confirmation/completion/rework.
-- `/api/procurement` — inbox, acknowledge/start, clarifications, final Procurement Outcome.
-- `/api/work-orders` — execution, status/progress, people, materials, completion evidence and completion-agent state.
-- `/api/admin` — basic user management.
+- `/api/auth` — registration, login, current user.
+- `/api/reports` — report submission, Reporter list/detail, independent verification, Agent state.
+- `/api/reference` — active buildings and configured facility locations.
+- `/api/notifications` — persistent user notifications.
+- `/api/maintenance` — priority/review queues, Maintenance Review, Procurement clarification response, completion/rework authority.
+- `/api/procurement` — Procurement inbox, acknowledgement/start, clarification, documents, Procurement Outcome.
+- `/api/work-orders` — dispatch/assignment, execution status, people/materials, completion evidence and completion-Agent state.
+- `/api/admin` — user management.
+- `/api/admin/knowledge` — damage-category, skill and material reference configuration.
 
-## Important human gates
+## Setup
 
-Node intentionally owns the human-authorized writes that the Agent must never perform:
+1. Configure `.env`. Node and `seefix-agents` must use the same canonical PostgreSQL database and shared Agent secret.
+2. Install dependencies:
 
-- PPO Staff: FinalCategory/FinalUrgency review + Maintenance Request authorization.
-- Procurement: final outcome metadata only; bidding/provider selection stays outside SEEFIX.
-- PPO Head: Work Order confirmation.
-- Responsible maintenance party/PPO: start/progress/completion submission.
-- PPO Head: Confirm Complete or Require Rework.
+   `npm install`
 
-The Agent provides inspection, drafts, deterministic policy/knowledge, Procurement clarification drafts, Work Order readiness/variance, and before/after completion assistance.
+3. Validate:
 
-## Report upload (mobile-ready)
+   `npm run check`
+   `npm test`
+   `npm run verify:db`
 
-`POST /api/reports` with Bearer JWT and `multipart/form-data`:
+4. Start:
 
-- `images` — one or more JPEG/PNG/WebP files (required)
-- `description`, `notes`, `building`, `floor`, `roomOrArea`, `gpsLat`, `gpsLng` — optional
+   `npm start`
 
-The API uploads evidence to Cloudinary and writes `Reports` + `ReportImages` in one PostgreSQL transaction.
+No static UI is served.
+
+## Report upload
+
+`POST /api/reports` uses Bearer JWT and `multipart/form-data`.
+
+- `images` — one or more JPEG/PNG/WebP files, required.
+- `locationId` — optional configured `FacilityLocations.Id`.
+- `building`, `floor`, `roomOrArea` — optional fallback/snapshot location text when no configured location is selected.
+- `description`, `notes`, `gpsLat`, `gpsLng` — optional.
+
+After the report and images commit, Node best-effort triggers `seefix-agents`. PostgreSQL remains the durable queue, so a failed HTTP trigger does not lose the report.
+
+## Human authority boundaries
+
+- Maintenance Staff/Supervisor: review prioritized reports and choose `INTERNAL`, `PROCUREMENT`, `NO_ACTION`, or `DUPLICATE`.
+- Maintenance Staff/Supervisor: assign/dispatch Work Orders.
+- Procurement: manage the SEEFIX handoff and record the final outcome only; bidding/provider selection remains outside SEEFIX.
+- Responsible worker/maintenance party: start work, record progress, parts/hold state, materials, people, and completion evidence.
+- Maintenance Supervisor: answer Procurement clarifications and make final complete/rework decisions.
+
+Work Orders begin at `PENDING_ASSIGNMENT`; the previous `PENDING_CONFIRMATION → CONFIRMED` gate no longer exists.
 
 ## Security
 
-Do not commit `.env`. The project never exposes `LOCAL_AGENT_SECRET` to mobile clients. Rotate any secret previously included in exported source files. Use strong JWT and Agent secrets in production and TLS for remote API/database traffic.
+- JWT authentication and role middleware protect business endpoints.
+- `LOCAL_AGENT_SECRET` is server-only and must never be sent to clients.
+- Report and Work Order images are restricted to supported image MIME types.
+- Database writes use parameterized SQL.
+- Keep `.env` out of source control and use TLS/production secrets for deployment.

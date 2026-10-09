@@ -61,7 +61,7 @@ router.get("/categories", async (_req, res, next) => {
          "DefaultRequiredCapability" AS "defaultRequiredCapability",
          "SafetyGuidance" AS "safetyGuidance",
          "PreferredTrade" AS "preferredTrade",
-         "RequiresPpoReview" AS "requiresPpoReview",
+         "RequiresMaintenanceReview" AS "requiresMaintenanceReview",
          "IsActive" AS "isActive",
          "SortOrder" AS "sortOrder",
          "UpdatedAt" AS "updatedAt"
@@ -87,7 +87,7 @@ router.patch("/categories/:code", async (req, res, next) => {
         defaultRequiredCapability: ["DefaultRequiredCapability", cleanText(req.body?.defaultRequiredCapability)],
         safetyGuidance: ["SafetyGuidance", cleanText(req.body?.safetyGuidance)],
         preferredTrade: ["PreferredTrade", cleanText(req.body?.preferredTrade)],
-        requiresPpoReview: ["RequiresPpoReview", req.body?.requiresPpoReview],
+        requiresMaintenanceReview: ["RequiresMaintenanceReview", req.body?.requiresMaintenanceReview],
         isActive: ["IsActive", req.body?.isActive],
         sortOrder: ["SortOrder", cleanNumber(req.body?.sortOrder, { min: 0, integer: true })],
       };
@@ -95,8 +95,8 @@ router.patch("/categories/:code", async (req, res, next) => {
       if (allowed.defaultUrgency[1] !== undefined && allowed.defaultUrgency[1] !== null && !URGENCIES.has(allowed.defaultUrgency[1])) {
         throw new ApiError(400, "defaultUrgency must be Low, Medium, High, Critical, or null.", "VALIDATION_ERROR");
       }
-      if (allowed.requiresPpoReview[1] !== undefined && typeof allowed.requiresPpoReview[1] !== "boolean") {
-        throw new ApiError(400, "requiresPpoReview must be boolean.", "VALIDATION_ERROR");
+      if (allowed.requiresMaintenanceReview[1] !== undefined && typeof allowed.requiresMaintenanceReview[1] !== "boolean") {
+        throw new ApiError(400, "requiresMaintenanceReview must be boolean.", "VALIDATION_ERROR");
       }
       if (allowed.isActive[1] !== undefined && typeof allowed.isActive[1] !== "boolean") {
         throw new ApiError(400, "isActive must be boolean.", "VALIDATION_ERROR");

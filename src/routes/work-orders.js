@@ -13,11 +13,22 @@ import { agentClient, bestEffort } from "../agent-client.js";
 import {
   notifyRole,
   notifyReporterForWorkOrder,
+  notifyResponsibleLeadForWorkOrder,
 } from "../services/notifications.js";
 import { normalizeMaterialItem, parseActualMaterials } from "../utils/materials.js";
 const router = Router();
 router.use(requireAuth);
-const WORK_ROLES = requireRoles("PPO_STAFF", "PPO_HEAD", "STAFF", "ADMIN");
+const WORK_ROLES = requireRoles(
+  "MAINTENANCE_STAFF",
+  "MAINTENANCE_SUPERVISOR",
+  "WORKER",
+  "ADMIN",
+);
+const ASSIGN_ROLES = requireRoles(
+  "MAINTENANCE_STAFF",
+  "MAINTENANCE_SUPERVISOR",
+  "ADMIN",
+);
 async function assertWorkAccess(id, user) {
   const q = await query(`SELECT * FROM "dbo"."WorkOrders" WHERE "Id"=$1`, [id]);
   const wo = q.rows[0];
@@ -28,13 +39,12 @@ async function assertWorkAccess(id, user) {
       "WORK_ORDER_NOT_FOUND",
     );
   if (
-    user.role === "STAFF" &&
-    wo.ResponsibleLeadUserId &&
-    String(wo.ResponsibleLeadUserId) !== String(user.id)
+    user.role === "WORKER" &&
+    String(wo.ResponsibleLeadUserId || "") !== String(user.id)
   )
     throw new ApiError(
       403,
-      "This Work Order is assigned to a different responsible lead.",
+      "This Work Order is not assigned to you as the responsible lead.",
       "FORBIDDEN",
     );
   return wo;
@@ -45,7 +55,7 @@ router.get("/", WORK_ROLES, async (req, res, next) => {
       `SELECT wo."Id" AS id,wo."WorkOrderNo" AS "workOrderNo",wo."Status" AS status,wo."AssignedPartyName" AS "assignedPartyName",wo."ResponsibleLeadName" AS "responsibleLeadName",wo."PlannedStartAt" AS "plannedStartAt",wo."Deadline" AS deadline,wo."CompletionAgentStatus" AS "completionAgentStatus",r."ReportNo" AS "reportNo",mr."RequestNo" AS "requestNo" FROM "dbo"."WorkOrders" wo JOIN "dbo"."Reports" r ON r."Id"=wo."ReportId" JOIN "dbo"."MaintenanceRequests" mr ON mr."Id"=wo."MaintenanceRequestId" WHERE ($1::text IS NULL OR wo."Status"=$1) AND ($2::uuid IS NULL OR wo."ResponsibleLeadUserId"=$2) ORDER BY wo."CreatedAt" DESC LIMIT 200`,
       [
         req.query.status || null,
-        req.user.role === "STAFF" ? req.user.id : null,
+        req.user.role === "WORKER" ? req.user.id : null,
       ],
     );
     res.json({ items: r.rows });
@@ -56,7 +66,11 @@ router.get("/", WORK_ROLES, async (req, res, next) => {
 router.get("/:id", WORK_ROLES, async (req, res, next) => {
   try {
     const wo = await assertWorkAccess(req.params.id, req.user);
-    const [people, materials, images, updates] = await Promise.all([
+    const [assignments, people, materials, images, updates] = await Promise.all([
+      query(
+        `SELECT * FROM "dbo"."WorkOrderAssignments" WHERE "WorkOrderId"=$1 ORDER BY "AssignedAt" DESC`,
+        [wo.Id],
+      ),
       query(
         `SELECT * FROM "dbo"."WorkOrderPeople" WHERE "WorkOrderId"=$1 ORDER BY "IsLead" DESC,"CreatedAt"`,
         [wo.Id],
@@ -76,6 +90,7 @@ router.get("/:id", WORK_ROLES, async (req, res, next) => {
     ]);
     res.json({
       workOrder: wo,
+      assignments: assignments.rows,
       people: people.rows,
       materials: materials.rows,
       images: images.rows,
@@ -85,12 +100,242 @@ router.get("/:id", WORK_ROLES, async (req, res, next) => {
     next(e);
   }
 });
+
+router.post("/:id/assign", ASSIGN_ROLES, async (req, res, next) => {
+  try {
+    const workOrder = await withTransaction(
+      req.user.id,
+      async (client) => {
+        const current = await client.query(
+          `SELECT *
+           FROM "dbo"."WorkOrders"
+           WHERE "Id"=$1
+           FOR UPDATE`,
+          [req.params.id],
+        );
+
+        const row = current.rows[0];
+
+        if (!row) {
+          throw new ApiError(
+            404,
+            "Work Order was not found.",
+            "WORK_ORDER_NOT_FOUND",
+          );
+        }
+
+        if (!["PENDING_ASSIGNMENT", "ASSIGNED"].includes(row.Status)) {
+          throw new ApiError(
+            409,
+            `Work Order cannot be assigned from ${row.Status}.`,
+            "INVALID_WORK_ORDER_STATE",
+          );
+        }
+
+        const assignedPartyName = String(
+          Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "assignedPartyName",
+          )
+            ? req.body.assignedPartyName || ""
+            : row.AssignedPartyName || "",
+        ).trim();
+
+        const responsibleLeadUserId =
+          Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "responsibleLeadUserId",
+          )
+            ? req.body.responsibleLeadUserId || null
+            : row.ResponsibleLeadUserId || null;
+
+        let responsibleLeadName = String(
+          Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "responsibleLeadName",
+          )
+            ? req.body.responsibleLeadName || ""
+            : row.ResponsibleLeadName || "",
+        ).trim() || null;
+
+        const responsibleLeadContact =
+          Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "responsibleLeadContact",
+          )
+            ? req.body.responsibleLeadContact || null
+            : row.ResponsibleLeadContact || null;
+
+        const responsibleLeadEmail =
+          Object.prototype.hasOwnProperty.call(
+            req.body || {},
+            "responsibleLeadEmail",
+          )
+            ? req.body.responsibleLeadEmail || null
+            : row.ResponsibleLeadEmail || null;
+
+        if (!assignedPartyName) {
+          throw new ApiError(
+            400,
+            "assignedPartyName is required before dispatch.",
+            "VALIDATION_ERROR",
+          );
+        }
+
+        if (!responsibleLeadUserId && !responsibleLeadName) {
+          throw new ApiError(
+            400,
+            "A responsible lead user or responsibleLeadName is required before dispatch.",
+            "VALIDATION_ERROR",
+          );
+        }
+
+        if (responsibleLeadUserId) {
+          const lead = await client.query(
+            `SELECT "Id","FullName","Role","IsActive"
+             FROM "dbo"."Users"
+             WHERE "Id"=$1`,
+            [responsibleLeadUserId],
+          );
+
+          if (!lead.rows[0]?.IsActive) {
+            throw new ApiError(
+              400,
+              "responsibleLeadUserId must reference an active user.",
+              "INVALID_RESPONSIBLE_LEAD",
+            );
+          }
+
+          if (
+            ![
+              "WORKER",
+              "MAINTENANCE_STAFF",
+              "MAINTENANCE_SUPERVISOR",
+              "ADMIN",
+            ].includes(lead.rows[0].Role)
+          ) {
+            throw new ApiError(
+              400,
+              "responsibleLeadUserId must reference a maintenance-capable user.",
+              "INVALID_RESPONSIBLE_LEAD",
+            );
+          }
+
+          if (!responsibleLeadName) {
+            responsibleLeadName = lead.rows[0].FullName;
+          }
+        }
+
+        const updated = await client.query(
+          `UPDATE "dbo"."WorkOrders"
+           SET
+             "AssignedPartyName"=$2,
+             "ResponsibleLeadUserId"=$3,
+             "ResponsibleLeadName"=$4,
+             "ResponsibleLeadContact"=$5,
+             "ResponsibleLeadEmail"=$6,
+             "AssignedBy"=$7,
+             "AssignedAt"=NOW(),
+             "Status"='ASSIGNED',
+             "UpdatedAt"=NOW()
+           WHERE "Id"=$1
+           RETURNING *`,
+          [
+            row.Id,
+            assignedPartyName,
+            responsibleLeadUserId,
+            responsibleLeadName,
+            responsibleLeadContact,
+            responsibleLeadEmail,
+            req.user.id,
+          ],
+        );
+
+        const assigned = updated.rows[0];
+
+        await client.query(
+          `INSERT INTO "dbo"."WorkOrderAssignments"
+             ("WorkOrderId","AssignedPartyName",
+              "ResponsibleLeadUserId","ResponsibleLeadName",
+              "ResponsibleLeadContact","ResponsibleLeadEmail",
+              "AssignedBy","AssignedAt","Reason")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            assigned.Id,
+            assigned.AssignedPartyName,
+            assigned.ResponsibleLeadUserId,
+            assigned.ResponsibleLeadName,
+            assigned.ResponsibleLeadContact,
+            assigned.ResponsibleLeadEmail,
+            req.user.id,
+            assigned.AssignedAt,
+            String(
+              req.body?.reason ||
+                (row.Status === "ASSIGNED"
+                  ? "Work Order reassigned."
+                  : "Initial Work Order assignment."),
+            ).trim(),
+          ],
+        );
+
+        await client.query(
+          `UPDATE "dbo"."WorkflowActionItems"
+           SET
+             "Status"='COMPLETED',
+             "CompletedBy"=$2,
+             "CompletedAt"=NOW(),
+             "UpdatedAt"=NOW()
+           WHERE "EntityType"='WORK_ORDER'
+             AND "EntityId"=$1
+             AND "ActionType"='ASSIGN_WORK_ORDER'
+             AND "Status"='OPEN'`,
+          [row.Id, req.user.id],
+        );
+
+        await notifyReporterForWorkOrder(client, row.Id, {
+          type: "WORK_ORDER_ASSIGNED",
+          title: "Maintenance work assigned",
+          message:
+            `${assigned.WorkOrderNo} was assigned to ${assigned.AssignedPartyName}.`,
+          deduplicationKey:
+            `report:${assigned.ReportId}:work-order-assigned:${assigned.Id}:${assigned.AssignedAt?.toISOString?.() || assigned.AssignedAt}`,
+          createdAt: assigned.AssignedAt,
+          payload: { status: "ASSIGNED" },
+        });
+
+        if (assigned.ResponsibleLeadUserId) {
+          await notifyResponsibleLeadForWorkOrder(
+            client,
+            assigned.Id,
+            {
+              type: "WORK_ORDER_ASSIGNED",
+              title: "Work Order assigned",
+              message:
+                `${assigned.WorkOrderNo} was assigned to you and is ready to start.`,
+              deduplicationKey:
+                `work-order:${assigned.Id}:assigned:${assigned.AssignedAt?.toISOString?.() || assigned.AssignedAt}`,
+              createdAt: assigned.AssignedAt,
+              payload: { status: "ASSIGNED" },
+            },
+          );
+        }
+
+        return assigned;
+      },
+    );
+
+    res.json({ workOrder });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post("/:id/start", WORK_ROLES, async (req, res, next) => {
   try {
     await assertWorkAccess(req.params.id, req.user);
     const r = await withTransaction(req.user.id, async (c) => {
       const result = await c.query(
-        `UPDATE "dbo"."WorkOrders" SET "Status"='IN_PROGRESS',"StartedBy"=COALESCE("StartedBy",$2),"StartedAt"=COALESCE("StartedAt",NOW()),"UpdatedAt"=NOW() WHERE "Id"=$1 AND "Status"='CONFIRMED' RETURNING *`,
+        `UPDATE "dbo"."WorkOrders" SET "Status"='IN_PROGRESS',"StartedBy"=COALESCE("StartedBy",$2),"StartedAt"=COALESCE("StartedAt",NOW()),"UpdatedAt"=NOW() WHERE "Id"=$1 AND "Status"='ASSIGNED' RETURNING *`,
         [req.params.id, req.user.id],
       );
       const started = result.rows[0];
@@ -109,7 +354,7 @@ router.post("/:id/start", WORK_ROLES, async (req, res, next) => {
     if (!r.rows[0])
       throw new ApiError(
         409,
-        "Only CONFIRMED Work Orders can be started.",
+        "Only ASSIGNED Work Orders can be started.",
         "INVALID_WORK_ORDER_STATE",
       );
     res.json({ workOrder: r.rows[0] });
@@ -367,7 +612,7 @@ router.post(
           ],
         );
         const submitted = u.rows[0];
-        await notifyRole(c, "PPO_HEAD", {
+        await notifyRole(c, "MAINTENANCE_SUPERVISOR", {
           type: "WORK_ORDER_COMPLETION_SUBMITTED",
           title: "Completion submitted",
           message: `${submitted.WorkOrderNo} requires completion review.`,
@@ -379,7 +624,7 @@ router.post(
         await notifyReporterForWorkOrder(c, wo.Id, {
           type: "COMPLETION_SUBMITTED",
           title: "Completion submitted",
-          message: `Completion evidence for ${submitted.WorkOrderNo} was submitted for PPO Head review.`,
+          message: `Completion evidence for ${submitted.WorkOrderNo} was submitted for Maintenance Supervisor review.`,
           deduplicationKey: `report:${submitted.ReportId}:completion-submitted:${submitted.Id}`,
           createdAt: submitted.CompletionSubmittedAt,
           payload: { status: "COMPLETION_SUBMITTED" },

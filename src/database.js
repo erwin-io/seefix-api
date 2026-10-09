@@ -53,7 +53,14 @@ export async function databaseHealth() {
 
 export function mapDatabaseError(error) {
   if (error instanceof ApiError) return error;
-  if (error?.code === "23505") return new ApiError(409, "A record with the same unique value already exists.", "CONFLICT");
+  if (error?.code === "23505") {
+    const name = String(error.constraint || '').toLowerCase();
+    if (name.includes('ux_reports_oneactiveperreporter'))
+      return new ApiError(409, 'You already have an active report. Open My Reports before submitting another.', 'ACTIVE_REPORT_EXISTS');
+    if (name.includes('users_email')) return new ApiError(409, 'Email is already in use.', 'EMAIL_IN_USE');
+    if (name.includes('users_username')) return new ApiError(409, 'Username is already in use.', 'USERNAME_IN_USE');
+    return new ApiError(409, 'A record with the same unique value already exists.', 'CONFLICT');
+  }
   if (error?.code === "23503") return new ApiError(409, "The operation references a missing or protected record.", "FOREIGN_KEY_CONFLICT");
   if (error?.code === "23514") return new ApiError(409, "The operation violates the SEEFIX workflow contract.", "CHECK_CONSTRAINT", error.constraint);
   if (error?.code === "22P02") return new ApiError(400, "One of the supplied identifiers or values is invalid.", "INVALID_VALUE");

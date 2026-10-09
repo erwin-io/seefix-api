@@ -59,6 +59,14 @@ export const config = Object.freeze({
     process.env.JWT_SECRET || "",
   ).trim(),
 
+  // A dedicated pepper is used to HMAC one-time verification codes.
+  otpPepper: String(process.env.OTP_PEPPER || '').trim(),
+  smtpHost: String(process.env.SMTP_HOST || '').trim(),
+  smtpPort: intEnv('SMTP_PORT', 587, 1),
+  smtpUser: String(process.env.SMTP_USER || '').trim(),
+  smtpPass: String(process.env.SMTP_PASS || ''),
+  smtpFrom: String(process.env.SMTP_FROM || '').trim(),
+
   jwtExpiresIn: String(
     process.env.JWT_EXPIRES_IN || "7d",
   ).trim(),
@@ -156,6 +164,9 @@ export function validateRuntimeConfig() {
   const required = [
     ["DATABASE_URL", config.databaseUrl],
     ["JWT_SECRET", config.jwtSecret],
+    ["OTP_PEPPER", config.otpPepper],
+    ["SMTP_HOST", config.smtpHost],
+    ["SMTP_FROM", config.smtpFrom],
     [
       "LOCAL_AGENT_SECRET",
       config.agentSecret,
@@ -172,6 +183,12 @@ export function validateRuntimeConfig() {
     );
   }
 
+  if (config.otpPepper.length < 32) {
+    throw new Error('OTP_PEPPER must be at least 32 characters.');
+  }
+  if (config.smtpUser && !config.smtpPass) {
+    throw new Error('SMTP_PASS is required when SMTP_USER is set.');
+  }
   if (config.jwtSecret.length < 32) {
     throw new Error(
       "JWT_SECRET must be at least 32 characters.",
