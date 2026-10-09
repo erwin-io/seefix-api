@@ -59,4 +59,19 @@ router.get("/locations", async (req, res, next) => {
   }
 });
 
+// Active categories for Maintenance Review overrides (review validates finalCategory by Name).
+router.get("/categories", async (_req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT "Code" AS code,"Name" AS name,"DefaultUrgency" AS "defaultUrgency"
+       FROM "dbo"."DamageCategories"
+       WHERE "IsActive"=TRUE
+       ORDER BY "SortOrder","Name"`,
+    );
+    res.json({ items: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

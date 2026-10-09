@@ -49,7 +49,8 @@ router.get("/handoffs/:id", ACCESS, async (req, res, next) => {
          mr."RequiredCapability",
          mr."ScopeOfWork",
          mr."SafetyRequirements",
-         r."ReportNo"
+         r."ReportNo",
+         r."Id" AS "ReportId"
        FROM "dbo"."ProcurementHandoffs" ph
        JOIN "dbo"."MaintenanceReviews" rv
          ON rv."Id"=ph."MaintenanceReviewId"

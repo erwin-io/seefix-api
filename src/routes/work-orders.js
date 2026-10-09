@@ -63,6 +63,17 @@ router.get("/", WORK_ROLES, async (req, res, next) => {
     next(e);
   }
 });
+// Registered before "/:id". Staff cannot use the ADMIN-only user list to pick a lead.
+router.get("/assignable-users", ASSIGN_ROLES, async (_req, res, next) => {
+  try {
+    const r = await query(
+      `SELECT "Id" AS id,"FullName" AS "fullName","Email" AS email,"Role" AS role,"JobTitle" AS "jobTitle","DepartmentOrTrade" AS "departmentOrTrade","Phone" AS phone FROM "dbo"."Users" WHERE "IsActive"=TRUE AND "Role" IN ('WORKER','MAINTENANCE_STAFF','MAINTENANCE_SUPERVISOR','ADMIN') ORDER BY ("Role"='WORKER') DESC,"FullName"`,
+    );
+    res.json({ items: r.rows });
+  } catch (e) {
+    next(e);
+  }
+});
 router.get("/:id", WORK_ROLES, async (req, res, next) => {
   try {
     const wo = await assertWorkAccess(req.params.id, req.user);
