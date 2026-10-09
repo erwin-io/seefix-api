@@ -1,0 +1,64 @@
+name: Claude Code API issue implementation
+
+# Opt-in only: erwin-io explicitly labels a bounded issue 'claude-build'
+# or comments beginning '@claude'. Requires ANTHROPIC_API_KEY Actions secret.
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: seefix-api-claude-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: >-
+      github.actor == 'erwin-io' &&
+      (
+        (github.event_name == 'issues' &&
+         github.event.label.name == 'claude-build' &&
+         github.event.issue.state == 'open' &&
+         !github.event.issue.pull_request) ||
+        (github.event_name == 'issue_comment' &&
+         !github.event.issue.pull_request &&
+         startsWith(github.event.comment.body, '@claude'))
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Claude Code — SEEFIX API development
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          track_progress: ${{ github.event_name == 'issues' }}
+          prompt: |
+            You are the dedicated SEEFIX Node.js/Express PostgreSQL API developer.
+            Repository: ${{ github.repository }}
+            Issue: #${{ github.event.issue.number }}
+            Read the issue, current source and docs before editing.
+            The PostgreSQL dbo schema and the existing REST contracts are authoritative.
+            Preserve JWT/RBAC roles, reporter active-report policy, cancellation safety,
+            transaction and idempotency guarantees, worker scoping, AI advisory-only
+            behavior, and all human review, dispatch, Procurement and closeout gates.
+            Review interoperability with seefix-web-admin, seefix-mobile-reporter,
+            and seefix-agents; do not edit those repositories in this job.
+            Do not invent endpoints, remove constraints or run destructive migrations.
+            Create a separate feature branch; add regression tests, run npm ci,
+            npm run check and npm test; document any integration or live DB tests
+            that could not be performed. Open a draft PR for human review if supported.
+            Never merge, commit to main, expose credentials, change production data
+            or close an epic without acceptance evidence.
