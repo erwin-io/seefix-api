@@ -1,0 +1,24 @@
+import Pusher from "pusher";
+import { config } from "../config.js";
+
+export const realtimeEnabled = Boolean(config.pusherAppId && config.pusherKey && config.pusherSecret && config.pusherCluster);
+
+const client = realtimeEnabled
+  ? new Pusher({
+      appId: config.pusherAppId,
+      key: config.pusherKey,
+      secret: config.pusherSecret,
+      cluster: config.pusherCluster,
+      useTLS: true,
+    })
+  : null;
+
+/** Rejects on HTTP/network failure so the dispatcher can retry. */
+export async function publish(channels, event, data) {
+  if (!client) throw new Error("Realtime is not configured.");
+  await client.trigger(channels, event, data);
+}
+
+export function authorizeChannel(socketId, channelName) {
+  return client.authorizeChannel(socketId, channelName);
+}
