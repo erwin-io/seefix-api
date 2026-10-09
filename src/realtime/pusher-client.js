@@ -10,6 +10,7 @@ const client = realtimeEnabled
       secret: config.pusherSecret,
       cluster: config.pusherCluster,
       useTLS: true,
+      timeout: config.outboxPublishTimeoutMs,
     })
   : null;
 

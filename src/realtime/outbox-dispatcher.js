@@ -8,6 +8,7 @@
  *   the lease (restart recovery). Concurrent dispatchers never claim the same row.
  * - Outcome writes are guarded by (Id, Status=PROCESSING, AttemptCount) so a stale
  *   worker whose lease expired cannot overwrite a newer attempt.
+ * - Rows older than maxAgeMinutes are never claimed (stale realtime is noise; clients refetch).
  * - Failure: PENDING with exponential backoff; FAILED after maxAttempts or when the
  *   row cannot be routed to a private channel. Rows are never deleted.
  * - Delivery is at-least-once: every message carries `eventId` (the outbox Id) for client dedupe.
@@ -20,11 +21,12 @@ export function backoffMs(attempt, { baseMs, maxMs }) {
   return Math.min(maxMs, baseMs * 2 ** Math.max(0, attempt - 1));
 }
 
-export async function claimBatch(q, { table = DEFAULT_TABLE, batchSize, leaseSeconds }) {
+export async function claimBatch(q, { table = DEFAULT_TABLE, batchSize, leaseSeconds, maxAgeMinutes }) {
   const r = await q(
     `WITH due AS (
        SELECT "Id" FROM ${table}
         WHERE "Transport"='PUSHER'
+          AND "CreatedAt">=NOW()-make_interval(mins => $3)
           AND (("Status"='PENDING' AND ("NextAttemptAt" IS NULL OR "NextAttemptAt"<=NOW()))
             OR ("Status"='PROCESSING' AND "NextAttemptAt"<=NOW()))
         ORDER BY "CreatedAt"
@@ -36,7 +38,7 @@ export async function claimBatch(q, { table = DEFAULT_TABLE, batchSize, leaseSec
             "NextAttemptAt"=NOW()+make_interval(secs => $2)
        FROM due WHERE o."Id"=due."Id"
      RETURNING o.*`,
-    [batchSize, leaseSeconds],
+    [batchSize, leaseSeconds, maxAgeMinutes],
   );
   return r.rows;
 }

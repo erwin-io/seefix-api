@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { backoffMs, claimBatch, dispatchOnce } from "../src/realtime/outbox-dispatcher.js";
 
-const OPTS = { batchSize: 10, leaseSeconds: 30, maxAttempts: 3, baseMs: 1000, maxMs: 8000 };
+const OPTS = { batchSize: 10, leaseSeconds: 30, maxAttempts: 3, baseMs: 1000, maxMs: 8000, maxAgeMinutes: 60 };
 const RID = "11111111-1111-4111-8111-111111111111";
 
 /** Fake query that returns `claimed` for the claim and records every outcome UPDATE. */
@@ -65,5 +65,6 @@ test("claim query uses SKIP LOCKED, a lease, PUSHER-only rows and reclaims expir
   assert.match(captured.sql, /FOR UPDATE SKIP LOCKED/);
   assert.match(captured.sql, /"Transport"='PUSHER'/);
   assert.match(captured.sql, /"Status"='PROCESSING' AND "NextAttemptAt"<=NOW\(\)/);
-  assert.deepEqual(captured.params, [10, 30]);
+  assert.match(captured.sql, /"CreatedAt">=NOW\(\)-make_interval\(mins => \$3\)/);
+  assert.deepEqual(captured.params, [10, 30, 60]);
 });

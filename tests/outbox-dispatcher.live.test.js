@@ -13,7 +13,7 @@ const live = process.env.SEEFIX_INTEGRATION_DB === "1";
 after(async () => {
   if (live) await (await import("../src/database.js")).pool.end();
 });
-const OPTS = { batchSize: 7, leaseSeconds: 30, maxAttempts: 5, baseMs: 60000, maxMs: 600000 };
+const OPTS = { batchSize: 7, leaseSeconds: 30, maxAttempts: 5, baseMs: 60000, maxMs: 600000, maxAgeMinutes: 60 };
 
 test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" }, async (t) => {
   const { pool } = await import("../src/database.js");
@@ -80,6 +80,16 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
     await q(`UPDATE ${table} SET "Status"='PENDING' WHERE "Id"=$1 AND "Status"='PROCESSING' AND "AttemptCount"=$2`, [stale.Id, stale.AttemptCount]);
     const after = (await q(`SELECT "Status","AttemptCount" FROM ${table}`)).rows[0];
     assert.deepEqual(after, { Status: "SENT", AttemptCount: 2 });
+  });
+
+  await t.test("rows older than maxAgeMinutes are never claimed and stay untouched", async () => {
+    await q(`DELETE FROM ${table}`);
+    await seed(2);
+    await q(`UPDATE ${table} SET "CreatedAt"=NOW()-interval '2 hours' WHERE ("Payload"->>'i')::int=0`);
+    const r = await dispatchOnce({ q, publish: async () => {}, table, ...OPTS });
+    assert.deepEqual(r, { claimed: 1, sent: 1, retried: 0, failed: 0 });
+    const rows = (await q(`SELECT "Status","AttemptCount" FROM ${table} ORDER BY "CreatedAt"`)).rows;
+    assert.deepEqual(rows, [{ Status: "PENDING", AttemptCount: 0 }, { Status: "SENT", AttemptCount: 1 }]);
   });
 });
 
