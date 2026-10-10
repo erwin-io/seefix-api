@@ -158,6 +158,27 @@ export const config = Object.freeze({
     24,
     1,
   ),
+
+  // Realtime (optional). Empty PUSHER_* = disabled: OutboxEvents rows stay PENDING, clients poll.
+  pusherAppId: String(process.env.PUSHER_APP_ID || "").trim(),
+  pusherKey: String(process.env.PUSHER_KEY || "").trim(),
+  pusherSecret: String(process.env.PUSHER_SECRET || ""),
+  pusherCluster: String(process.env.PUSHER_CLUSTER || "").trim(),
+  // OutboxEvents -> Pusher dispatcher, started by server.js (or `npm run outbox:dispatch` as a separate worker).
+  // Opt-in: delivery starts only with OUTBOX_DISPATCHER=on (see docs/REALTIME_ROLLOUT.md).
+  outboxDispatcherEnabled: String(process.env.OUTBOX_DISPATCHER || "off").trim().toLowerCase() === "on",
+  // Opt-in: advertise realtime to clients only after a publisher (this instance or a dedicated
+  // `npm run outbox:dispatch` worker) is confirmed healthy. Off = clients poll, whatever PUSHER_* says.
+  realtimeClientsEnabled: String(process.env.REALTIME_CLIENTS_ENABLED || "off").trim().toLowerCase() === "on",
+  outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
+  outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 10, 1),
+  outboxMaxAttempts: intEnv("OUTBOX_MAX_ATTEMPTS", 8, 1),
+  outboxLeaseSeconds: intEnv("OUTBOX_LEASE_SECONDS", 60, 5),
+  outboxBackoffBaseMs: intEnv("OUTBOX_BACKOFF_BASE_MS", 2000, 100),
+  outboxBackoffMaxMs: intEnv("OUTBOX_BACKOFF_MAX_MS", 600000, 1000),
+  outboxPublishTimeoutMs: intEnv("OUTBOX_PUBLISH_TIMEOUT_MS", 5000, 500),
+  // Rows older than this are never claimed (left PENDING, untouched): bounds backlog on first enable.
+  outboxMaxAgeMinutes: intEnv("OUTBOX_MAX_AGE_MINUTES", 60, 1),
 });
 
 export function validateRuntimeConfig() {
@@ -188,6 +209,10 @@ export function validateRuntimeConfig() {
   }
   if (config.smtpUser && !config.smtpPass) {
     throw new Error('SMTP_PASS is required when SMTP_USER is set.');
+  }
+  // A batch is published sequentially under one lease; the lease must outlive the worst-case batch.
+  if (config.outboxLeaseSeconds * 1000 <= config.outboxBatchSize * config.outboxPublishTimeoutMs) {
+    throw new Error("OUTBOX_LEASE_SECONDS must exceed OUTBOX_BATCH_SIZE x OUTBOX_PUBLISH_TIMEOUT_MS.");
   }
   if (config.jwtSecret.length < 32) {
     throw new Error(
