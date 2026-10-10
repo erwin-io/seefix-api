@@ -23,6 +23,9 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
   const q = (sql, p) => pool.query(sql, p);
   await q(`CREATE SCHEMA "${schema}"`);
   await q(`CREATE TABLE ${table} (LIKE "dbo"."OutboxEvents" INCLUDING ALL)`);
+  // Enforce the strictest shipped Status CHECK (schema 2026-09-16), not whatever the dev DB allows.
+  await q(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS "CK_OutboxEvents_Status"`);
+  await q(`ALTER TABLE ${table} ADD CONSTRAINT "CK_OutboxEvents_Status" CHECK ("Status" IN ('PENDING','PROCESSING','SENT','FAILED'))`);
   t.after(async () => {
     await q(`DROP SCHEMA "${schema}" CASCADE`);
   });
@@ -82,7 +85,14 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
     assert.deepEqual(after, { Status: "SENT", AttemptCount: 2 });
   });
 
-  await t.test("a lease that lapses after the row passed max age is CANCELLED, never stuck or published", async () => {
+  await t.test("the throwaway table enforces the 2026-09-16 Status CHECK", async () => {
+    await assert.rejects(
+      q(`INSERT INTO ${table} ("AggregateType","AggregateId","Transport","EventName","Payload","Status") VALUES ('REPORT',$1,'PUSHER','x','{}','CANCELLED')`, [randomUUID()]),
+      (e) => e.code === "23514",
+    );
+  });
+
+  await t.test("a lease that lapses after the row passed max age is FAILED as expired, never stuck or published", async () => {
     await q(`DELETE FROM ${table}`);
     await seed(2); // i=0: crashes near the age cutoff; i=1: fresh control that crashes too
     const claimed = await claimBatch(q, { table, ...OPTS }); // worker A claims both, then dies
@@ -96,13 +106,13 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
     assert.deepEqual(published, [1], "only the fresh control row is re-sent");
     assert.equal(r.expired, 1);
     const rows = (await q(`SELECT ("Payload"->>'i')::int i,"Status","LastError" FROM ${table} ORDER BY 1`)).rows;
-    assert.equal(rows[0].Status, "CANCELLED");
+    assert.equal(rows[0].Status, "FAILED");
     assert.match(rows[0].LastError, /expired/);
     assert.equal(rows[1].Status, "SENT");
     assert.equal((await q(`SELECT COUNT(*)::int n FROM ${table} WHERE "Status"='PROCESSING'`)).rows[0].n, 0, "nothing left PROCESSING");
     // Worker A wakes and reports success for its old attempt: guarded, no effect.
     await q(`UPDATE ${table} SET "Status"='SENT' WHERE "Id"=$1 AND "Status"='PROCESSING' AND "AttemptCount"=$2`, [old.Id, old.AttemptCount]);
-    assert.equal((await q(`SELECT "Status" FROM ${table} WHERE "Id"=$1`, [old.Id])).rows[0].Status, "CANCELLED");
+    assert.equal((await q(`SELECT "Status" FROM ${table} WHERE "Id"=$1`, [old.Id])).rows[0].Status, "FAILED");
     // An unexpired lease on an old row is left to its owner (it may still be publishing).
     await q(`DELETE FROM ${table}`);
     await seed(1);

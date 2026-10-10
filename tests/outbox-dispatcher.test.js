@@ -10,7 +10,7 @@ function harness(claimed) {
   const updates = [];
   const q = async (sql, params) => {
     if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: claimed, rowCount: claimed.length };
-    if (sql.includes("'CANCELLED'")) return { rows: [], rowCount: 0 }; // expireLapsed: nothing lapsed
+    if (sql.includes("lease lapsed")) return { rows: [], rowCount: 0 }; // expireLapsed: nothing lapsed
     if (sql.startsWith("UPDATE")) {
       updates.push({ status: sql.includes("'SENT'") ? "SENT" : params[2], params });
       return { rowCount: 1, rows: [] };
@@ -106,7 +106,9 @@ test("expireLapsed cancels only expired PUSHER leases on rows past the max age",
   let captured;
   const n = await expireLapsed(async (sql, params) => ((captured = { sql, params }), { rows: [], rowCount: 2 }), { maxAgeMinutes: 60 });
   assert.equal(n, 2);
-  assert.match(captured.sql, /SET "Status"='CANCELLED'/);
+  assert.match(captured.sql, /SET "Status"='FAILED'/);
+  assert.match(captured.sql, /"LastError"='expired: lease lapsed after OUTBOX_MAX_AGE_MINUTES; not delivered'/);
+  assert.doesNotMatch(captured.sql, /CANCELLED/, "older schemas reject CANCELLED");
   assert.match(captured.sql, /"Transport"='PUSHER' AND "Status"='PROCESSING' AND "NextAttemptAt"<=NOW\(\)/);
   assert.match(captured.sql, /"CreatedAt"<NOW\(\)-make_interval\(mins => \$1\)/);
   assert.deepEqual(captured.params, [60]);
