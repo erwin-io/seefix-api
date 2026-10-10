@@ -94,10 +94,22 @@ export async function dispatchOnce({ q, publish, table = DEFAULT_TABLE, ...opts 
   return result;
 }
 
+/** PUSHER rows left PENDING past maxAgeMinutes (never claimed by design); surfaced for operators. */
+export async function countStale(q, { table = DEFAULT_TABLE, maxAgeMinutes }) {
+  const r = await q(
+    `SELECT COUNT(*)::int n FROM ${table} WHERE "Transport"='PUSHER' AND "Status"='PENDING' AND "CreatedAt"<NOW()-make_interval(mins => $1)`,
+    [maxAgeMinutes],
+  );
+  return r.rows[0].n;
+}
+
 /** Poll loop for long-lived processes. Returns stop(). Never throws into the caller. */
 export function startDispatcher({ q, publish, intervalMs, log = console, ...opts }) {
   let stopped = false;
   let timer = null;
+  countStale(q, opts)
+    .then((n) => n && log.warn?.(`[OUTBOX] ${n} PUSHER event(s) older than ${opts.maxAgeMinutes} min stay PENDING and will not be sent (see docs/REALTIME_ROLLOUT.md).`))
+    .catch(() => {});
   const tick = async () => {
     if (stopped) return;
     try {

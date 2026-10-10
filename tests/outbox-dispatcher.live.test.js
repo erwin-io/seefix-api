@@ -17,7 +17,7 @@ const OPTS = { batchSize: 7, leaseSeconds: 30, maxAttempts: 5, baseMs: 60000, ma
 
 test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" }, async (t) => {
   const { pool } = await import("../src/database.js");
-  const { dispatchOnce, claimBatch } = await import("../src/realtime/outbox-dispatcher.js");
+  const { dispatchOnce, claimBatch, countStale } = await import("../src/realtime/outbox-dispatcher.js");
   const schema = `seefix_outbox_test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   const table = `"${schema}"."OutboxEvents"`;
   const q = (sql, p) => pool.query(sql, p);
@@ -90,6 +90,7 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
     assert.deepEqual(r, { claimed: 1, sent: 1, retried: 0, failed: 0 });
     const rows = (await q(`SELECT "Status","AttemptCount" FROM ${table} ORDER BY "CreatedAt"`)).rows;
     assert.deepEqual(rows, [{ Status: "PENDING", AttemptCount: 0 }, { Status: "SENT", AttemptCount: 1 }]);
+    assert.equal(await countStale(q, { table, ...OPTS }), 1, "stale rows are visible to operators");
   });
 });
 

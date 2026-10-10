@@ -19,6 +19,18 @@ REST stays authoritative and every realtime message is a "refetch" hint carrying
 - **Scoping:** channels are derived server-side (`src/realtime/channels.js`); unroutable rows become `FAILED`, never
   broadcast. `/api/realtime/auth` applies the same rules as `GET /api/reports/:id` (`canSubscribe`).
 
+## Stale events: policy, observability, cleanup
+- **Deliberate:** events older than `OUTBOX_MAX_AGE_MINUTES` stay `PENDING` and are never sent. A realtime event
+  is only a "refetch" hint; once it is stale, the client's REST read or poll already has the data. Leaving the
+  row untouched keeps the audit trail and allows a deliberate replay.
+- **Observability:** on start, the dispatcher logs `[OUTBOX] N PUSHER event(s) older than ... stay PENDING`, and it logs
+  each pass that moves rows to `FAILED`. For ad-hoc checks:
+  `SELECT "Status",COUNT(*),MIN("CreatedAt") FROM dbo."OutboxEvents" WHERE "Transport"='PUSHER' GROUP BY 1;`
+- **Cleanup (operator decision, not automated):** to close stale rows explicitly without deleting them:
+  `UPDATE dbo."OutboxEvents" SET "Status"='FAILED',"LastError"='expired: older than OUTBOX_MAX_AGE_MINUTES'
+   WHERE "Transport"='PUSHER' AND "Status"='PENDING' AND "CreatedAt"<NOW()-interval '60 minutes';`
+  Rows are never deleted by the application.
+
 ## Enable (canary)
 1. Confirm the backlog that will **not** be sent:
    `SELECT "Status",COUNT(*),MIN("CreatedAt") FROM dbo."OutboxEvents" WHERE "Transport"='PUSHER' GROUP BY 1;`
