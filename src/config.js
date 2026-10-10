@@ -167,6 +167,9 @@ export const config = Object.freeze({
   // OutboxEvents -> Pusher dispatcher, started by server.js (or `npm run outbox:dispatch` as a separate worker).
   // Opt-in: delivery starts only with OUTBOX_DISPATCHER=on (see docs/REALTIME_ROLLOUT.md).
   outboxDispatcherEnabled: String(process.env.OUTBOX_DISPATCHER || "off").trim().toLowerCase() === "on",
+  // Opt-in: advertise realtime to clients only after a publisher (this instance or a dedicated
+  // `npm run outbox:dispatch` worker) is confirmed healthy. Off = clients poll, whatever PUSHER_* says.
+  realtimeClientsEnabled: String(process.env.REALTIME_CLIENTS_ENABLED || "off").trim().toLowerCase() === "on",
   outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
   outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 10, 1),
   outboxMaxAttempts: intEnv("OUTBOX_MAX_ATTEMPTS", 8, 1),

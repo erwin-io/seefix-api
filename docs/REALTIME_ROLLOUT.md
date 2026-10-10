@@ -1,8 +1,19 @@
 # Realtime (OutboxEvents -> Pusher) rollout
 
-Delivery is **off by default**. Deploying this code changes nothing until `OUTBOX_DISPATCHER=on` is set
-(or `npm run outbox:dispatch` is started) with `PUSHER_*` configured. Clients keep polling either way;
-REST stays authoritative and every realtime message is a "refetch" hint carrying `eventId`.
+Two independent opt-in switches, both **off by default**:
+
+| Switch | Controls | Default |
+|---|---|---|
+| `OUTBOX_DISPATCHER=on` (or a dedicated `npm run outbox:dispatch` worker) | **Publishing**: `OutboxEvents` → Pusher | off: rows stay `PENDING` |
+| `REALTIME_CLIENTS_ENABLED=on` | **Advertising**: `GET /api/realtime/config` → `enabled:true`, and `/api/realtime/auth` signs subscriptions | off: `enabled:false`, `/auth` 503, clients poll |
+
+Having `PUSHER_*` credentials enables neither. Clients go "live" and stop polling only when realtime is advertised, so
+`REALTIME_CLIENTS_ENABLED` must be turned on **only after a publisher is confirmed running**, and turned off **before** stopping
+the last publisher. REST stays authoritative, and every realtime message is a "refetch" hint carrying `eventId`.
+
+**Activation order.** Single-instance: set `OUTBOX_DISPATCHER=on` on that instance, confirm a row reaches `SENT`, then set
+`REALTIME_CLIENTS_ENABLED=on` and restart. Dedicated worker: run `npm run outbox:dispatch` (API instances keep `OUTBOX_DISPATCHER=off`),
+confirm a row reaches `SENT`, then set `REALTIME_CLIENTS_ENABLED=on` on the API instances.
 
 ## Guarantees and limits
 - **Contract:** uses only existing `dbo."OutboxEvents"` columns (`Status`, `AttemptCount`, `NextAttemptAt`,
@@ -46,7 +57,7 @@ and the notification test rolls its transaction back.
 ```bash
 npm run check && npm test                                    # unit: channel matrix, dispatcher outcomes, claim SQL
 SEEFIX_INTEGRATION_DB=1 node --test --test-reporter=spec tests/outbox-dispatcher.live.test.js   # concurrency, outage, lease, max age, tx rollback
-SEEFIX_INTEGRATION_DB=1 node --test --test-reporter=spec tests/realtime-acl-parity.live.test.js # REST vs realtime auth per role; secret checks
+SEEFIX_INTEGRATION_DB=1 REALTIME_CLIENTS_ENABLED=on node --test --test-reporter=spec tests/realtime-acl-parity.live.test.js # REST vs realtime auth per role; secret checks
 ```
 Preflight (no user-identifying fields; payload **key names** only):
 ```sql
@@ -65,6 +76,9 @@ Stop and review before enabling if a payload carries free text or personal data:
       (60-minute cap, measured from `CreatedAt` at claim time).
 - [ ] Turn on **one** instance: `OUTBOX_DISPATCHER=on`, then restart. The log shows `OutboxEvents -> Pusher dispatcher running` and,
       if any exist, `[OUTBOX] N PUSHER event(s) older than 60 min stay PENDING`.
+- [ ] Before clients are enabled: `GET /api/realtime/config` returns `enabled:false` (clients poll), even with `PUSHER_*` set.
+- [ ] After the canary row below reaches `SENT`, set `REALTIME_CLIENTS_ENABLED=on` (canary instance, or all API instances when a dedicated worker
+      publishes) and restart. `GET /api/realtime/config` now returns `enabled:true`.
 - [ ] Trigger one notification for test user A. In the Pusher debug console it appears on `private-user-{A}` only, and its row
       becomes `SENT` with `AttemptCount=1`.
 - [ ] As user B, `POST /api/realtime/auth` for `private-user-{A}`, a report/work order/handoff that B cannot GET, and a
@@ -76,7 +90,8 @@ Stop and review before enabling if a payload carries free text or personal data:
 - [ ] Only after the hour is clean: enable on other instances, if wanted. Concurrent dispatchers are safe (`SKIP LOCKED`).
 
 ## Disable / rollback
-Set `OUTBOX_DISPATCHER=off` and restart; no code rollback or migration is needed. Undelivered rows stay `PENDING`, nothing is
+First set `REALTIME_CLIENTS_ENABLED=off` and restart the API instances, so clients see `enabled:false` on their next start and poll.
+Then set `OUTBOX_DISPATCHER=off` (or stop the worker) and restart; no code rollback or migration is needed. Undelivered rows stay `PENDING`, nothing is
 lost, and clients poll. A row a stopped instance was holding as `PROCESSING` is picked up after its lease by any
 instance still on, or left as is if all are off.
 

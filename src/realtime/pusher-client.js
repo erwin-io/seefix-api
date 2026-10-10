@@ -1,7 +1,10 @@
 import Pusher from "pusher";
 import { config } from "../config.js";
 
+/** PUSHER_* credentials present: the server can publish (dispatcher) and sign auth. */
 export const realtimeEnabled = Boolean(config.pusherAppId && config.pusherKey && config.pusherSecret && config.pusherCluster);
+/** Clients may subscribe: credentials AND an operator confirmed a running publisher (REALTIME_CLIENTS_ENABLED=on). */
+export const clientRealtimeEnabled = realtimeEnabled && config.realtimeClientsEnabled;
 
 const client = realtimeEnabled
   ? new Pusher({

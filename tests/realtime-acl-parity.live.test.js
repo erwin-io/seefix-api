@@ -14,6 +14,8 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
   const { app } = await import("../src/app.js");
   const { pool, query } = await import("../src/database.js");
   const { signAccessToken } = await import("../src/middleware/auth.js");
+  const { clientRealtimeEnabled } = await import("../src/realtime/pusher-client.js");
+  assert.ok(clientRealtimeEnabled, "run with PUSHER_* and REALTIME_CLIENTS_ENABLED=on (see docs/REALTIME_ROLLOUT.md)");
   const server = app.listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
