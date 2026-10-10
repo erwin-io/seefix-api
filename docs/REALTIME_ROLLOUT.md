@@ -31,18 +31,47 @@ REST stays authoritative and every realtime message is a "refetch" hint carrying
    WHERE "Transport"='PUSHER' AND "Status"='PENDING' AND "CreatedAt"<NOW()-interval '60 minutes';`
   Rows are never deleted by the application.
 
-## Enable (canary)
-1. Confirm the backlog that will **not** be sent:
-   `SELECT "Status",COUNT(*),MIN("CreatedAt") FROM dbo."OutboxEvents" WHERE "Transport"='PUSHER' GROUP BY 1;`
-2. Enable on **one** instance: `OUTBOX_DISPATCHER=on` (others stay `off`), or run `npm run outbox:dispatch` once.
-3. Canary: trigger one notification for a test user, open the Pusher debug console, and verify:
-   the event lands on `private-user-{that user}` only; the row is `SENT`; a second user's client receives nothing;
-   `/api/realtime/auth` returns 403 for that second user on the first user's channel.
-4. Watch `"Status"='FAILED'` and `"LastError"` for an hour, then enable on the remaining instances if wanted
-   (concurrent dispatchers are safe).
+## Verification (reproducible)
+Ordinary CI (`npm run check && npm test`) runs the unit tests only. The live tests are opt-in and separate:
+they need a PostgreSQL with the SEEFIX schema (`DATABASE_URL`) and, for the ACL/secret test, `PUSHER_*`.
+They never modify existing `dbo` rows. Dispatcher tests use a throwaway schema copied from `dbo."OutboxEvents"`,
+and the notification test rolls its transaction back.
+```bash
+npm run check && npm test                                    # unit: channel matrix, dispatcher outcomes, claim SQL
+SEEFIX_INTEGRATION_DB=1 node --test --test-reporter=spec tests/outbox-dispatcher.live.test.js   # concurrency, outage, lease, max age, tx rollback
+SEEFIX_INTEGRATION_DB=1 node --test --test-reporter=spec tests/realtime-acl-parity.live.test.js # REST vs realtime auth per role; secret checks
+```
+Preflight (no user-identifying fields; payload **key names** only):
+```sql
+SELECT "Transport","Status","AggregateType","EventName",
+       (SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys("Payload") k) AS payload_keys,
+       ("ChannelName" IS NOT NULL) AS has_channel_name, ("RecipientUserId" IS NOT NULL) AS has_recipient,
+       COUNT(*)::int AS n, date_trunc('day', MIN("CreatedAt")) AS oldest_day
+  FROM dbo."OutboxEvents" GROUP BY 1,2,3,4,5,6,7 ORDER BY 1,3,4;
+```
+Expected payload keys are ids or status only (for example `reportId,reportNo,agentStatus` or `notificationId,type,entityType,entityId`).
+Stop and review before enabling if a payload carries free text or personal data: every subscriber authorized on that channel receives it.
+
+## One-instance canary checklist
+- [ ] Deployed with `OUTBOX_DISPATCHER=off` (the default) on **all** instances. Startup is clean: no lease/timeout config error.
+- [ ] Preflight query reviewed: the payload keys are ids or status only, and the stale `PENDING` count is noted. Those rows will **not** be sent
+      (60-minute cap, measured from `CreatedAt` at claim time).
+- [ ] Turn on **one** instance: `OUTBOX_DISPATCHER=on`, then restart. The log shows `OutboxEvents -> Pusher dispatcher running` and,
+      if any exist, `[OUTBOX] N PUSHER event(s) older than 60 min stay PENDING`.
+- [ ] Trigger one notification for test user A. In the Pusher debug console it appears on `private-user-{A}` only, and its row
+      becomes `SENT` with `AttemptCount=1`.
+- [ ] As user B, `POST /api/realtime/auth` for `private-user-{A}`, a report/work order/handoff that B cannot GET, and a
+      nonexistent id. All return **403**. The same call for B's own channel returns 200.
+- [ ] Watch for one hour: `SELECT "Status",COUNT(*) FROM dbo."OutboxEvents" WHERE "Transport"='PUSHER' AND "CreatedAt">NOW()-interval '1 hour' GROUP BY 1;`
+      Expect no `FAILED` rows and no `PROCESSING` rows older than the lease (60 s).
+- [ ] Duplicate delivery is understood. If the instance is killed between a Pusher accept and the `SENT` write, the row is re-sent
+      after the lease with the **same `eventId`**. Clients treat events as "refetch", so a duplicate costs one extra GET.
+- [ ] Only after the hour is clean: enable on other instances, if wanted. Concurrent dispatchers are safe (`SKIP LOCKED`).
 
 ## Disable / rollback
-Set `OUTBOX_DISPATCHER=off` and restart. Undelivered rows stay `PENDING`; nothing is lost and clients poll.
+Set `OUTBOX_DISPATCHER=off` and restart; no code rollback or migration is needed. Undelivered rows stay `PENDING`, nothing is
+lost, and clients poll. A row a stopped instance was holding as `PROCESSING` is picked up after its lease by any
+instance still on, or left as is if all are off.
 
 ## Deliberate replay
 Only when a replay is actually wanted: temporarily raise `OUTBOX_MAX_AGE_MINUTES` on one instance, let it drain,

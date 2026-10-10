@@ -4,8 +4,9 @@
  *
  *   private-user-{userId}         the user only
  *   private-report-{reportId}     whoever may GET /api/reports/:id
- *   private-work-order-{woId}     maintenance roles, or the Worker who is responsible lead
- *   private-handoff-{handoffId}   Procurement + maintenance roles
+ *   private-work-order-{woId}     whoever may GET /api/work-orders/:id
+ *   private-handoff-{handoffId}   whoever may GET /api/procurement/handoffs/:id
+ *   (each only for a record that exists, like the REST 404)
  *
  * Outbox rows never choose an arbitrary channel: routing is derived from the
  * row's recipient / aggregate here, on the server.
@@ -75,17 +76,22 @@ export async function canSubscribe(user, name, q) {
 
   if (type === "user") return id === String(user.id).toLowerCase();
 
-  if (type === "handoff") return isMaintenance || user.role === "PROCUREMENT";
+  // Like the REST GETs (404), a channel for a record that does not exist is never authorized.
+  const exists = async (table) => (await q(`SELECT 1 FROM "dbo"."${table}" WHERE "Id"=$1`, [id])).rowCount > 0;
 
+  // GET /api/procurement/handoffs/:id
+  if (type === "handoff") return (isMaintenance || user.role === "PROCUREMENT") && exists("ProcurementHandoffs");
+
+  // GET /api/work-orders/:id (assertWorkAccess)
   if (type === "work-order") {
-    if (isMaintenance) return true;
+    if (isMaintenance) return exists("WorkOrders");
     if (user.role !== "WORKER") return false;
     const r = await q(`SELECT 1 FROM "dbo"."WorkOrders" WHERE "Id"=$1 AND "ResponsibleLeadUserId"=$2`, [id, user.id]);
     return r.rowCount > 0;
   }
 
   // report: same scoping as getReportDetail()
-  if (isMaintenance) return true;
+  if (isMaintenance) return exists("Reports");
   if (user.role === "REPORTER") {
     const r = await q(`SELECT 1 FROM "dbo"."Reports" WHERE "Id"=$1 AND "ReporterId"=$2`, [id, user.id]);
     return r.rowCount > 0;

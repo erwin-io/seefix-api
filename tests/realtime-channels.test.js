@@ -44,23 +44,95 @@ test("canSubscribe: user channel is self-only", async () => {
   assert.equal(await canSubscribe(null, `private-user-${U}`, q), false);
 });
 
-test("canSubscribe: report channel mirrors GET /api/reports/:id scoping", async () => {
-  const q = fakeQ([['"Reports" WHERE "Id"=$1 AND "ReporterId"', R, U], ['"WorkOrders" WHERE "ReportId"', R, W]]);
-  const ch = `private-report-${R}`;
-  for (const role of ["MAINTENANCE_STAFF", "MAINTENANCE_SUPERVISOR", "ADMIN"]) assert.equal(await canSubscribe({ id: "x", role }, ch, q), true, role);
-  assert.equal(await canSubscribe({ id: U, role: "REPORTER" }, ch, q), true, "owner");
-  assert.equal(await canSubscribe({ id: W, role: "REPORTER" }, ch, q), false, "another reporter");
-  assert.equal(await canSubscribe({ id: W, role: "WORKER" }, ch, q), true, "lead on a linked work order");
-  assert.equal(await canSubscribe({ id: U, role: "WORKER" }, ch, q), false, "unrelated worker");
-  assert.equal(await canSubscribe({ id: U, role: "PROCUREMENT" }, ch, q), false, "no linked handoff");
+// ---- canSubscribe vs REST read rules, line by line -------------------------------------------
+// In-memory records; the fake query answers exactly the lookups canSubscribe makes and throws on
+// anything else, so an unexpected query (or a missing lookup) fails the test.
+const id = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
+const U_ADMIN = id(1), U_SUP = id(2), U_STAFF = id(3), U_PROC = id(4), U_WRK = id(5), U_WRK2 = id(6), U_REP = id(7), U_REP2 = id(8), U_GUEST = id(9);
+const R_LINKED = id("a"), R_PLAIN = id("b"), WO = id("c"), HO = id("d"), MISSING = id("e");
+const DB = {
+  Reports: [{ Id: R_LINKED, ReporterId: U_REP }, { Id: R_PLAIN, ReporterId: U_REP2 }],
+  WorkOrders: [{ Id: WO, ReportId: R_LINKED, ResponsibleLeadUserId: U_WRK }],
+  ProcurementHandoffs: [{ Id: HO, ReportId: R_LINKED }],
+};
+async function dbQ(sql, [a, b]) {
+  const rows = (list) => ({ rows: list, rowCount: list.length });
+  let m;
+  if ((m = /^SELECT 1 FROM "dbo"\."(\w+)" WHERE "Id"=\$1$/.exec(sql))) return rows(DB[m[1]].filter((x) => x.Id === a));
+  if (sql.includes('"Reports" WHERE "Id"=$1 AND "ReporterId"=$2')) return rows(DB.Reports.filter((x) => x.Id === a && x.ReporterId === b));
+  if (sql.includes('"WorkOrders" WHERE "Id"=$1 AND "ResponsibleLeadUserId"=$2')) return rows(DB.WorkOrders.filter((x) => x.Id === a && x.ResponsibleLeadUserId === b));
+  if (sql.includes('"WorkOrders" WHERE "ReportId"=$1 AND "ResponsibleLeadUserId"=$2')) return rows(DB.WorkOrders.filter((x) => x.ReportId === a && x.ResponsibleLeadUserId === b));
+  if (sql.includes('"ProcurementHandoffs" ph JOIN "dbo"."MaintenanceRequests"')) return rows(DB.ProcurementHandoffs.filter((x) => x.ReportId === a));
+  throw new Error(`unexpected query: ${sql}`);
+}
+const USERS = {
+  ADMIN: { id: U_ADMIN, role: "ADMIN" },
+  SUPERVISOR: { id: U_SUP, role: "MAINTENANCE_SUPERVISOR" },
+  STAFF: { id: U_STAFF, role: "MAINTENANCE_STAFF" },
+  PROCUREMENT: { id: U_PROC, role: "PROCUREMENT" },
+  "WORKER (lead)": { id: U_WRK, role: "WORKER" },
+  "WORKER (unrelated)": { id: U_WRK2, role: "WORKER" },
+  "REPORTER (owner)": { id: U_REP, role: "REPORTER" },
+  "REPORTER (other)": { id: U_REP2, role: "REPORTER" },
+  "unknown role": { id: U_GUEST, role: "GUEST" },
+};
+// Expected = REST GET result (200 -> 1, 403/404 -> 0), written from the route code:
+//   reports/:id   getReportDetail: 404 missing; staff roles; REPORTER owner; PROCUREMENT linked handoff; WORKER lead of linked WO
+//   work-orders/:id  WORK_ROLES + assertWorkAccess: 404 missing; WORKER only as responsible lead
+//   procurement/handoffs/:id  ACCESS = PROCUREMENT + staff roles; 404 missing
+// Columns: report linked | report plain | report missing | work-order | wo missing | handoff | handoff missing
+const EXPECTED = {
+  ADMIN:                  [1, 1, 0, 1, 0, 1, 0],
+  SUPERVISOR:             [1, 1, 0, 1, 0, 1, 0],
+  STAFF:                  [1, 1, 0, 1, 0, 1, 0],
+  PROCUREMENT:            [1, 0, 0, 0, 0, 1, 0],
+  "WORKER (lead)":        [1, 0, 0, 1, 0, 0, 0],
+  "WORKER (unrelated)":   [0, 0, 0, 0, 0, 0, 0],
+  "REPORTER (owner)":     [1, 0, 0, 0, 0, 0, 0],
+  "REPORTER (other)":     [0, 1, 0, 0, 0, 0, 0],
+  "unknown role":         [0, 0, 0, 0, 0, 0, 0],
+};
+const CHANNELS = [`private-report-${R_LINKED}`, `private-report-${R_PLAIN}`, `private-report-${MISSING}`, `private-work-order-${WO}`, `private-work-order-${MISSING}`, `private-handoff-${HO}`, `private-handoff-${MISSING}`];
+
+test("canSubscribe matches the REST read rules for every role x channel (incl. nonexistent records)", async () => {
+  const actual = {};
+  for (const [name, user] of Object.entries(USERS)) {
+    actual[name] = [];
+    for (const ch of CHANNELS) actual[name].push((await canSubscribe(user, ch, dbQ)) ? 1 : 0);
+  }
+  assert.deepEqual(actual, EXPECTED);
 });
 
-test("canSubscribe: work-order channel is maintenance or responsible lead; handoff is procurement/maintenance", async () => {
-  const q = fakeQ([['"WorkOrders" WHERE "Id"=$1 AND "ResponsibleLeadUserId"', W, U]]);
-  assert.equal(await canSubscribe({ id: U, role: "WORKER" }, `private-work-order-${W}`, q), true);
-  assert.equal(await canSubscribe({ id: R, role: "WORKER" }, `private-work-order-${W}`, q), false);
-  assert.equal(await canSubscribe({ id: U, role: "PROCUREMENT" }, `private-work-order-${W}`, q), false);
-  assert.equal(await canSubscribe({ id: U, role: "PROCUREMENT" }, `private-handoff-${H}`, q), true);
-  assert.equal(await canSubscribe({ id: U, role: "WORKER" }, `private-handoff-${H}`, q), false);
-  assert.equal(await canSubscribe({ id: U, role: "REPORTER" }, `private-handoff-${H}`, q), false);
+test("canSubscribe: user channels are self-only for every role; malformed names are rejected without a query", async () => {
+  for (const user of Object.values(USERS)) {
+    assert.equal(await canSubscribe(user, `private-user-${user.id}`, dbQ), true, `${user.role} own`);
+    assert.equal(await canSubscribe(user, `private-user-${user.id.toUpperCase()}`, dbQ), true, "case-insensitive uuid");
+    assert.equal(await canSubscribe(user, `private-user-${U_REP2 === user.id ? U_REP : U_REP2}`, dbQ), false, `${user.role} other`);
+  }
+  const noQuery = async () => assert.fail("must not query for a malformed channel");
+  const admin = USERS.ADMIN;
+  for (const bad of [`report-${R_LINKED}`, `presence-report-${R_LINKED}`, `private-report-${R_LINKED}-x`, `private-report-not-a-uuid`, `private-role-ADMIN`, `private-encrypted-user-${U_ADMIN}`, `private-report-${R_LINKED};drop`, "", null, undefined, 42]) {
+    assert.equal(await canSubscribe(admin, bad, noQuery), false, String(bad));
+  }
+  assert.equal(await canSubscribe(null, `private-user-${U_ADMIN}`, noQuery), false, "no user");
+  assert.equal(await canSubscribe({ role: "ADMIN" }, `private-report-${R_LINKED}`, noQuery), false, "user without id");
+});
+
+test("every routable outbox row is published only to private channels", async () => {
+  const q = async (sql) => ({ rows: sql.includes("MaintenanceRequests") ? [{ ReportId: R_LINKED }] : [{ ProcurementHandoffId: HO }], rowCount: 1 });
+  const rows = [
+    { RecipientUserId: U_REP, AggregateType: "NOTIFICATION", ChannelName: "public-feed" },
+    { AggregateType: "REPORT", AggregateId: R_LINKED, ChannelName: "public-feed" },
+    { AggregateType: "WORK_ORDER", AggregateId: WO },
+    { AggregateType: "PROCUREMENT_HANDOFF", AggregateId: HO },
+    { AggregateType: "MAINTENANCE_REQUEST", AggregateId: id("f") },
+    { AggregateType: "PROCUREMENT_CLARIFICATION", AggregateId: id("f") },
+    { ChannelName: `report-${R_LINKED}`, AggregateType: "REPORT" },
+    { ChannelName: `work-order-${WO}`, AggregateType: "WORK_ORDER" },
+  ];
+  for (const row of rows) {
+    const channels = await resolveChannels(row, q);
+    assert.equal(channels.length, 1, JSON.stringify(row));
+    assert.ok(parseChannel(channels[0]), `${channels[0]} must be a private channel`);
+  }
 });

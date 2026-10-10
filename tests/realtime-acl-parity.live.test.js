@@ -5,6 +5,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 
 const live = process.env.SEEFIX_INTEGRATION_DB === "1";
 const ROLES = ["ADMIN", "MAINTENANCE_SUPERVISOR", "MAINTENANCE_STAFF", "PROCUREMENT", "WORKER", "REPORTER"];
@@ -34,8 +35,26 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
       ...(await ids(`SELECT r."Id" FROM "dbo"."Reports" r JOIN "dbo"."WorkOrders" w ON w."ReportId"=r."Id" LIMIT 3`)).map((id) => ["report", id, `/api/reports/${id}`]),
       ...(await ids(`SELECT "Id" FROM "dbo"."WorkOrders" ORDER BY "CreatedAt" DESC LIMIT 6`)).map((id) => ["work-order", id, `/api/work-orders/${id}`]),
       ...(await ids(`SELECT "Id" FROM "dbo"."ProcurementHandoffs" ORDER BY "CreatedAt" DESC LIMIT 4`)).map((id) => ["handoff", id, `/api/procurement/handoffs/${id}`]),
-    ];
+
+      // Nonexistent records: REST 404, realtime must deny too.
+      ["report", randomUUID(), null],
+      ["work-order", randomUUID(), null],
+      ["handoff", randomUUID(), null],
+    ].map(([type, id, path]) => [type, id, path ?? `/api/${{ report: "reports", "work-order": "work-orders", handoff: "procurement/handoffs" }[type]}/${id}`]);
     assert.ok(users.length >= 5 && cases.length > 0, "needs seeded users and records");
+
+    // The Pusher secret never leaves the server: not in /config, not in an /auth signature response.
+    const { config } = await import("../src/config.js");
+    const u0 = users[0];
+    const h0 = { Authorization: `Bearer ${signAccessToken({ id: u0.Id, role: u0.Role, email: u0.Email }, u0.CredentialsVersion)}` };
+    const cfgText = await (await fetch(base + "/api/realtime/config", { headers: h0 })).text();
+    const authText = await (await fetch(base + "/api/realtime/auth", { method: "POST", headers: { ...h0, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ socket_id: "1.2", channel_name: `private-user-${u0.Id}` }) })).text();
+    assert.ok(config.pusherSecret.length > 0, "live run needs PUSHER_SECRET");
+    for (const text of [cfgText, authText]) assert.ok(!text.includes(config.pusherSecret), "secret must not be returned");
+    assert.deepEqual(Object.keys(JSON.parse(cfgText)).sort(), ["cluster", "enabled", "key", "userChannel"]);
+    assert.deepEqual(Object.keys(JSON.parse(authText)), ["auth"]);
+    assert.match(JSON.parse(authText).auth, /^[^:]+:[0-9a-f]{64}$/, "auth is key:HMAC only");
+    console.log("Secret check: /config keys [cluster,enabled,key,userChannel], /auth keys [auth]; secret absent from both.");
 
     const rows = [];
     const mismatches = [];
