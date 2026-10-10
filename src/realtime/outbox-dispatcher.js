@@ -8,7 +8,8 @@
  *   the lease (restart recovery). Concurrent dispatchers never claim the same row.
  * - Outcome writes are guarded by (Id, Status=PROCESSING, AttemptCount) so a stale
  *   worker whose lease expired cannot overwrite a newer attempt.
- * - Rows older than maxAgeMinutes are never claimed (stale realtime is noise; clients refetch).
+ * - Rows older than maxAgeMinutes are never claimed (stale realtime is noise; clients refetch);
+ *   an expired lease on such a row is closed as CANCELLED (expireLapsed) instead of staying PROCESSING.
  * - Failure: PENDING with exponential backoff; FAILED after maxAttempts or when the
  *   row cannot be routed to a private channel. Rows are never deleted.
  * - Delivery is at-least-once: every message carries `eventId` (the outbox Id) for client dedupe.
@@ -63,10 +64,29 @@ async function markFailure(q, table, row, error, opts, { permanent = false } = {
   );
 }
 
+/**
+ * A lease that lapsed after its row passed maxAgeMinutes (worker died near the cutoff) is never
+ * reclaimed for delivery; close it as CANCELLED so it cannot stay PROCESSING forever. The WHERE
+ * clause is re-checked under the row lock, so concurrent workers expire each row once, and a stale
+ * worker's late SENT/FAILED write no longer matches Status='PROCESSING'.
+ */
+export async function expireLapsed(q, { table = DEFAULT_TABLE, maxAgeMinutes }) {
+  const r = await q(
+    `UPDATE ${table}
+        SET "Status"='CANCELLED',"NextAttemptAt"=NULL,
+            "LastError"='expired: lease lapsed after OUTBOX_MAX_AGE_MINUTES; not delivered'
+      WHERE "Transport"='PUSHER' AND "Status"='PROCESSING' AND "NextAttemptAt"<=NOW()
+        AND "CreatedAt"<NOW()-make_interval(mins => $1)`,
+    [maxAgeMinutes],
+  );
+  return r.rowCount ?? 0;
+}
+
 /** One claim/publish pass. Returns counts for logging and tests. */
 export async function dispatchOnce({ q, publish, table = DEFAULT_TABLE, ...opts }) {
+  const expired = await expireLapsed(q, { table, ...opts });
   const rows = await claimBatch(q, { table, ...opts });
-  const result = { claimed: rows.length, sent: 0, retried: 0, failed: 0 };
+  const result = { claimed: rows.length, sent: 0, retried: 0, failed: 0, expired };
   for (const row of rows) {
     let channels;
     try {
@@ -117,6 +137,7 @@ export function startDispatcher({ q, publish, intervalMs, log = console, ...opts
       // Drain quickly when a full batch was claimed; otherwise wait for the next poll.
       timer = setTimeout(tick, r.claimed >= opts.batchSize ? 0 : intervalMs);
       if (r.failed) log.warn?.(`[OUTBOX] ${r.failed} event(s) moved to FAILED.`);
+      if (r.expired) log.warn?.(`[OUTBOX] ${r.expired} lapsed lease(s) past max age moved to CANCELLED (not delivered).`);
     } catch (error) {
       log.warn?.(`[OUTBOX] dispatch pass failed: ${error?.message || error}`);
       timer = setTimeout(tick, intervalMs);

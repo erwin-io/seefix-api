@@ -28,8 +28,8 @@ test("parseChannel accepts only the four private UUID channel types", () => {
 test("resolveChannels routes outbox rows server-side and never broadcasts unknown rows", async () => {
   const q = fakeQ([['"MaintenanceRequests"', "mr"], ['"ProcurementClarifications"', "pc"]]);
   assert.deepEqual(await resolveChannels({ RecipientUserId: U, AggregateType: "NOTIFICATION" }, q), [`private-user-${U}`]);
-  assert.deepEqual(await resolveChannels({ ChannelName: `report-${R}`, AggregateType: "MAINTENANCE_REQUEST" }, q), [`private-report-${R}`]);
-  assert.deepEqual(await resolveChannels({ ChannelName: `work-order-${W}`, AggregateType: "WORK_ORDER" }, q), [`private-work-order-${W}`]);
+  assert.deepEqual(await resolveChannels({ ChannelName: `report-${R}`, AggregateType: "MAINTENANCE_REQUEST", AggregateId: "mr" }, q), [`private-report-${R}`]);
+  assert.deepEqual(await resolveChannels({ ChannelName: `work-order-${W}`, AggregateType: "WORK_ORDER", AggregateId: W }, q), [`private-work-order-${W}`]);
   assert.deepEqual(await resolveChannels({ AggregateType: "WORK_ORDER", AggregateId: W }, q), [`private-work-order-${W}`]);
   assert.deepEqual(await resolveChannels({ AggregateType: "MAINTENANCE_REQUEST", AggregateId: "mr" }, q), [`private-report-${R}`]);
   assert.deepEqual(await resolveChannels({ AggregateType: "PROCUREMENT_CLARIFICATION", AggregateId: "pc" }, q), [`private-handoff-${H}`]);
@@ -122,17 +122,41 @@ test("every routable outbox row is published only to private channels", async ()
   const q = async (sql) => ({ rows: sql.includes("MaintenanceRequests") ? [{ ReportId: R_LINKED }] : [{ ProcurementHandoffId: HO }], rowCount: 1 });
   const rows = [
     { RecipientUserId: U_REP, AggregateType: "NOTIFICATION", ChannelName: "public-feed" },
-    { AggregateType: "REPORT", AggregateId: R_LINKED, ChannelName: "public-feed" },
+    { AggregateType: "REPORT", AggregateId: R_LINKED },
     { AggregateType: "WORK_ORDER", AggregateId: WO },
     { AggregateType: "PROCUREMENT_HANDOFF", AggregateId: HO },
     { AggregateType: "MAINTENANCE_REQUEST", AggregateId: id("f") },
     { AggregateType: "PROCUREMENT_CLARIFICATION", AggregateId: id("f") },
-    { ChannelName: `report-${R_LINKED}`, AggregateType: "REPORT" },
-    { ChannelName: `work-order-${WO}`, AggregateType: "WORK_ORDER" },
+    { ChannelName: `report-${R_LINKED}`, AggregateType: "REPORT", AggregateId: R_LINKED },
+    { ChannelName: `work-order-${WO}`, AggregateType: "WORK_ORDER", AggregateId: WO },
   ];
   for (const row of rows) {
     const channels = await resolveChannels(row, q);
     assert.equal(channels.length, 1, JSON.stringify(row));
     assert.ok(parseChannel(channels[0]), `${channels[0]} must be a private channel`);
   }
+});
+
+test("legacy ChannelName never overrides the aggregate identity: mismatches fail closed", async () => {
+  // MaintenanceRequest "mr" belongs to report R (database parent).
+  const q = fakeQ([['"MaintenanceRequests"', "mr"], ['"ProcurementClarifications"', "pc"]]);
+  const OTHER = "55555555-5555-4555-8555-555555555555";
+  const cases = [
+    // [row, expected]
+    [{ AggregateType: "WORK_ORDER", AggregateId: W, ChannelName: `report-${OTHER}` }, []], // work order payload to another report
+    [{ AggregateType: "WORK_ORDER", AggregateId: W, ChannelName: `work-order-${OTHER}` }, []], // other work order
+    [{ AggregateType: "REPORT", AggregateId: R, ChannelName: `report-${OTHER}` }, []], // other report
+    [{ AggregateType: "REPORT", AggregateId: R, ChannelName: `work-order-${R}` }, []], // wrong channel type
+    [{ AggregateType: "MAINTENANCE_REQUEST", AggregateId: "mr", ChannelName: `report-${OTHER}` }, []], // child with wrong parent
+    [{ AggregateType: "MAINTENANCE_REQUEST", AggregateId: "missing", ChannelName: `report-${R}` }, []], // parent cannot be verified
+    [{ AggregateType: "SOMETHING_ELSE", AggregateId: R, ChannelName: `report-${R}` }, []], // legacy name alone is never enough
+    [{ AggregateType: "REPORT", AggregateId: R, ChannelName: "public-feed" }, []], // unrecognised name: fail closed
+    // Valid seefix-agents legacy rows keep working.
+    [{ AggregateType: "REPORT", AggregateId: R, ChannelName: `report-${R}` }, [`private-report-${R}`]],
+    [{ AggregateType: "REPORT", AggregateId: R, ChannelName: `REPORT-${R.toUpperCase()}` }, [`private-report-${R}`]],
+    [{ AggregateType: "WORK_ORDER", AggregateId: W, ChannelName: `work-order-${W}` }, [`private-work-order-${W}`]],
+    [{ AggregateType: "MAINTENANCE_REQUEST", AggregateId: "mr", ChannelName: `report-${R}` }, [`private-report-${R}`]],
+    [{ AggregateType: "WORK_ORDER", AggregateId: W, ChannelName: null }, [`private-work-order-${W}`]],
+  ];
+  for (const [row, expected] of cases) assert.deepEqual(await resolveChannels(row, q), expected, JSON.stringify(row));
 });

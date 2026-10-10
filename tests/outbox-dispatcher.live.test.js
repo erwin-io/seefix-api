@@ -60,7 +60,7 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
     await q(`DELETE FROM ${table}`);
     await seed(3);
     const down = await dispatchOnce({ q, publish: async () => { throw new Error("pusher down"); }, table, ...OPTS });
-    assert.deepEqual(down, { claimed: 3, sent: 0, retried: 3, failed: 0 });
+    assert.deepEqual(down, { claimed: 3, sent: 0, retried: 3, failed: 0, expired: 0 });
     const rows = (await q(`SELECT "Status","AttemptCount","LastError","NextAttemptAt">NOW() AS later FROM ${table}`)).rows;
     assert.ok(rows.every((r) => r.Status === "PENDING" && r.AttemptCount === 1 && r.LastError === "pusher down" && r.later));
     assert.equal((await dispatchOnce({ q, publish: async () => {}, table, ...OPTS })).claimed, 0, "not before backoff");
@@ -82,12 +82,42 @@ test("live outbox dispatcher", { skip: !live && "set SEEFIX_INTEGRATION_DB=1" },
     assert.deepEqual(after, { Status: "SENT", AttemptCount: 2 });
   });
 
+  await t.test("a lease that lapses after the row passed max age is CANCELLED, never stuck or published", async () => {
+    await q(`DELETE FROM ${table}`);
+    await seed(2); // i=0: crashes near the age cutoff; i=1: fresh control that crashes too
+    const claimed = await claimBatch(q, { table, ...OPTS }); // worker A claims both, then dies
+    assert.equal(claimed.length, 2);
+    const old = claimed.find((r) => r.Payload.i === 0);
+    // Time passes: the old row crosses the 60-minute cap while its lease is held, then both leases lapse.
+    await q(`UPDATE ${table} SET "CreatedAt"=NOW()-interval '61 minutes' WHERE "Id"=$1`, [old.Id]);
+    await q(`UPDATE ${table} SET "NextAttemptAt"=NOW()-interval '1 second'`);
+    const published = [];
+    const r = await dispatchOnce({ q, publish: async (_c, _e, d) => void published.push(d.i), table, ...OPTS });
+    assert.deepEqual(published, [1], "only the fresh control row is re-sent");
+    assert.equal(r.expired, 1);
+    const rows = (await q(`SELECT ("Payload"->>'i')::int i,"Status","LastError" FROM ${table} ORDER BY 1`)).rows;
+    assert.equal(rows[0].Status, "CANCELLED");
+    assert.match(rows[0].LastError, /expired/);
+    assert.equal(rows[1].Status, "SENT");
+    assert.equal((await q(`SELECT COUNT(*)::int n FROM ${table} WHERE "Status"='PROCESSING'`)).rows[0].n, 0, "nothing left PROCESSING");
+    // Worker A wakes and reports success for its old attempt: guarded, no effect.
+    await q(`UPDATE ${table} SET "Status"='SENT' WHERE "Id"=$1 AND "Status"='PROCESSING' AND "AttemptCount"=$2`, [old.Id, old.AttemptCount]);
+    assert.equal((await q(`SELECT "Status" FROM ${table} WHERE "Id"=$1`, [old.Id])).rows[0].Status, "CANCELLED");
+    // An unexpired lease on an old row is left to its owner (it may still be publishing).
+    await q(`DELETE FROM ${table}`);
+    await seed(1);
+    await claimBatch(q, { table, ...OPTS });
+    await q(`UPDATE ${table} SET "CreatedAt"=NOW()-interval '61 minutes'`);
+    assert.equal((await dispatchOnce({ q, publish: async () => {}, table, ...OPTS })).expired, 0);
+    assert.equal((await q(`SELECT "Status" FROM ${table}`)).rows[0].Status, "PROCESSING");
+  });
+
   await t.test("rows older than maxAgeMinutes are never claimed and stay untouched", async () => {
     await q(`DELETE FROM ${table}`);
     await seed(2);
     await q(`UPDATE ${table} SET "CreatedAt"=NOW()-interval '2 hours' WHERE ("Payload"->>'i')::int=0`);
     const r = await dispatchOnce({ q, publish: async () => {}, table, ...OPTS });
-    assert.deepEqual(r, { claimed: 1, sent: 1, retried: 0, failed: 0 });
+    assert.deepEqual(r, { claimed: 1, sent: 1, retried: 0, failed: 0, expired: 0 });
     const rows = (await q(`SELECT "Status","AttemptCount" FROM ${table} ORDER BY "CreatedAt"`)).rows;
     assert.deepEqual(rows, [{ Status: "PENDING", AttemptCount: 0 }, { Status: "SENT", AttemptCount: 1 }]);
     assert.equal(await countStale(q, { table, ...OPTS }), 1, "stale rows are visible to operators");

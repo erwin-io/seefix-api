@@ -34,33 +34,45 @@ export function parseChannel(name) {
 /**
  * Private channel(s) for an OutboxEvents row. Returns [] when the row cannot be
  * routed safely (it is then marked FAILED instead of being broadcast).
+ * The channel is always derived from AggregateType/AggregateId (child aggregates
+ * resolve their parent from the database). A legacy ChannelName is only accepted
+ * when it names that same channel; any disagreement fails closed.
  * `q(sql, params)` resolves parent ids for child aggregates.
  */
 export async function resolveChannels(row, q) {
   if (row.RecipientUserId) return [channel.user(row.RecipientUserId)];
 
-  // Rows written by seefix-agents carry public-style names ("report-{id}"); map to the private equivalent.
-  const legacy = LEGACY.exec(String(row.ChannelName || ""));
-  if (legacy) return [legacy[1].toLowerCase() === "report" ? channel.report(legacy[2]) : channel.workOrder(legacy[2])];
+  const canonical = await aggregateChannel(row, q);
+  if (!canonical) return [];
+  if (row.ChannelName) {
+    // Rows written by seefix-agents carry public-style names ("report-{id}"); they must match the aggregate.
+    const legacy = LEGACY.exec(String(row.ChannelName));
+    const named = legacy && `private-${legacy[1].toLowerCase()}-${legacy[2].toLowerCase()}`;
+    if (named !== canonical.toLowerCase()) return [];
+  }
+  return [canonical];
+}
 
+async function aggregateChannel(row, q) {
   const id = row.AggregateId;
+  if (!id) return null;
   switch (row.AggregateType) {
     case "REPORT":
-      return [channel.report(id)];
+      return channel.report(id);
     case "WORK_ORDER":
-      return [channel.workOrder(id)];
+      return channel.workOrder(id);
     case "PROCUREMENT_HANDOFF":
-      return [channel.handoff(id)];
+      return channel.handoff(id);
     case "MAINTENANCE_REQUEST": {
       const r = await q(`SELECT "ReportId" FROM "dbo"."MaintenanceRequests" WHERE "Id"=$1`, [id]);
-      return r.rows[0] ? [channel.report(r.rows[0].ReportId)] : [];
+      return r.rows[0] ? channel.report(r.rows[0].ReportId) : null;
     }
     case "PROCUREMENT_CLARIFICATION": {
       const r = await q(`SELECT "ProcurementHandoffId" FROM "dbo"."ProcurementClarifications" WHERE "Id"=$1`, [id]);
-      return r.rows[0] ? [channel.handoff(r.rows[0].ProcurementHandoffId)] : [];
+      return r.rows[0] ? channel.handoff(r.rows[0].ProcurementHandoffId) : null;
     }
     default:
-      return [];
+      return null;
   }
 }
 

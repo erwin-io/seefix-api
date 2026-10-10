@@ -16,7 +16,13 @@ REST stays authoritative and every realtime message is a "refetch" hint carrying
 - **Retry:** exponential backoff (`OUTBOX_BACKOFF_*`); `FAILED` after `OUTBOX_MAX_ATTEMPTS`; rows are never deleted.
 - **Backlog bound:** rows older than `OUTBOX_MAX_AGE_MINUTES` (default 60) are never claimed and stay `PENDING`,
   untouched. Enabling delivery therefore never floods clients with old events.
-- **Scoping:** channels are derived server-side (`src/realtime/channels.js`); unroutable rows become `FAILED`, never
+- **Lapsed lease past max age:** if a worker dies holding a row and the row crosses `OUTBOX_MAX_AGE_MINUTES` before its
+  lease expires, the next pass sets it to `CANCELLED` with `LastError='expired: lease lapsed ...'`. It is never re-sent
+  and never left `PROCESSING`. A lease that has not expired yet is left to its owner. Check with
+  `SELECT COUNT(*) FROM dbo."OutboxEvents" WHERE "Status"='CANCELLED' AND "LastError" LIKE 'expired:%';`.
+- **Scoping:** channels are derived server-side (`src/realtime/channels.js`) from `AggregateType`/`AggregateId`. Child
+  aggregates resolve their parent from the DB. A legacy `ChannelName` (`report-{id}`, `work-order-{id}`) is accepted
+  only when it names that same channel; any mismatch or unrecognised name fails closed. Unroutable rows become `FAILED`, never
   broadcast. `/api/realtime/auth` applies the same rules as `GET /api/reports/:id` (`canSubscribe`).
 
 ## Stale events: policy, observability, cleanup

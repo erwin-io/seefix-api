@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backoffMs, claimBatch, countStale, dispatchOnce, startDispatcher } from "../src/realtime/outbox-dispatcher.js";
+import { backoffMs, claimBatch, countStale, dispatchOnce, expireLapsed, startDispatcher } from "../src/realtime/outbox-dispatcher.js";
 
 const OPTS = { batchSize: 10, leaseSeconds: 30, maxAttempts: 3, baseMs: 1000, maxMs: 8000, maxAgeMinutes: 60 };
 const RID = "11111111-1111-4111-8111-111111111111";
@@ -10,6 +10,7 @@ function harness(claimed) {
   const updates = [];
   const q = async (sql, params) => {
     if (sql.includes("FOR UPDATE SKIP LOCKED")) return { rows: claimed, rowCount: claimed.length };
+    if (sql.includes("'CANCELLED'")) return { rows: [], rowCount: 0 }; // expireLapsed: nothing lapsed
     if (sql.startsWith("UPDATE")) {
       updates.push({ status: sql.includes("'SENT'") ? "SENT" : params[2], params });
       return { rowCount: 1, rows: [] };
@@ -28,7 +29,7 @@ test("success publishes to the private channel with eventId, then marks SENT for
   const { q, updates } = harness([row()]);
   const sent = [];
   const r = await dispatchOnce({ q, publish: async (...a) => sent.push(a), ...OPTS });
-  assert.deepEqual(r, { claimed: 1, sent: 1, retried: 0, failed: 0 });
+  assert.deepEqual(r, { claimed: 1, sent: 1, retried: 0, failed: 0, expired: 0 });
   assert.deepEqual(sent[0], [[`private-report-${RID}`], "report.assessment.completed", { reportId: RID, eventId: "e1" }]);
   assert.equal(updates[0].status, "SENT");
   assert.deepEqual(updates[0].params, ["e1", 1], "guarded by Id + AttemptCount");
@@ -37,7 +38,7 @@ test("success publishes to the private channel with eventId, then marks SENT for
 test("Pusher outage keeps the row: back to PENDING with backoff, nothing lost", async () => {
   const { q, updates } = harness([row({ AttemptCount: 2 })]);
   const r = await dispatchOnce({ q, publish: async () => { throw new Error("ECONNRESET"); }, ...OPTS });
-  assert.deepEqual(r, { claimed: 1, sent: 0, retried: 1, failed: 0 });
+  assert.deepEqual(r, { claimed: 1, sent: 0, retried: 1, failed: 0, expired: 0 });
   assert.equal(updates[0].status, "PENDING");
   assert.equal(updates[0].params[3], "ECONNRESET");
   assert.equal(updates[0].params[4], 2, "2nd attempt waits 2s");
@@ -99,4 +100,14 @@ test("startDispatcher warns about stale rows, and a failing stale query never st
   assert.deepEqual(warnings, [], "stale-count failure is not fatal or noisy");
   assert.equal(await run(async () => ({ rows: [{ n: 0 }] })) >= 2, true);
   assert.deepEqual(warnings, [], "no warning when nothing is stale");
+});
+
+test("expireLapsed cancels only expired PUSHER leases on rows past the max age", async () => {
+  let captured;
+  const n = await expireLapsed(async (sql, params) => ((captured = { sql, params }), { rows: [], rowCount: 2 }), { maxAgeMinutes: 60 });
+  assert.equal(n, 2);
+  assert.match(captured.sql, /SET "Status"='CANCELLED'/);
+  assert.match(captured.sql, /"Transport"='PUSHER' AND "Status"='PROCESSING' AND "NextAttemptAt"<=NOW\(\)/);
+  assert.match(captured.sql, /"CreatedAt"<NOW\(\)-make_interval\(mins => \$1\)/);
+  assert.deepEqual(captured.params, [60]);
 });
