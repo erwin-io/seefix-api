@@ -41,7 +41,8 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
       ["work-order", randomUUID(), null],
       ["handoff", randomUUID(), null],
     ].map(([type, id, path]) => [type, id, path ?? `/api/${{ report: "reports", "work-order": "work-orders", handoff: "procurement/handoffs" }[type]}/${id}`]);
-    assert.ok(users.length >= 5 && cases.length > 0, "needs seeded users and records");
+    const missingRoles = ROLES.filter((role) => !users.some((u) => u.Role === role));
+    assert.deepEqual(missingRoles, [], `needs one active user per role; missing: ${missingRoles.join(", ")}`);
 
     // The Pusher secret never leaves the server: not in /config, not in an /auth signature response.
     const { config } = await import("../src/config.js");
@@ -80,6 +81,12 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
       rows.push({ role: u.Role, type: "user", id: "own/other", rest: "-", realtime: `${own.status}/${foreign.status}` });
       if (own.status !== 200 || foreign.status !== 403) mismatches.push(rows.at(-1));
     }
+    // Scoped roles must show both an allowed and a denied record, or the parity check proves nothing for them.
+    const unproven = ["WORKER", "REPORTER", "PROCUREMENT"].filter((role) => {
+      const r = rows.filter((x) => x.role === role && x.type !== "user");
+      return !r.some((x) => x.realtime === 200) || !r.some((x) => x.realtime !== 200);
+    });
+    assert.deepEqual(unproven, [], `scoped roles need positive and negative examples; missing for: ${unproven.join(", ")}`);
     const summary = {};
     for (const r of rows) {
       const k = `${r.role} ${r.type}`;

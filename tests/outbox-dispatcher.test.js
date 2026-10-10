@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backoffMs, claimBatch, dispatchOnce } from "../src/realtime/outbox-dispatcher.js";
+import { backoffMs, claimBatch, countStale, dispatchOnce, startDispatcher } from "../src/realtime/outbox-dispatcher.js";
 
 const OPTS = { batchSize: 10, leaseSeconds: 30, maxAttempts: 3, baseMs: 1000, maxMs: 8000, maxAgeMinutes: 60 };
 const RID = "11111111-1111-4111-8111-111111111111";
@@ -67,4 +67,36 @@ test("claim query uses SKIP LOCKED, a lease, PUSHER-only rows and reclaims expir
   assert.match(captured.sql, /"Status"='PROCESSING' AND "NextAttemptAt"<=NOW\(\)/);
   assert.match(captured.sql, /"CreatedAt">=NOW\(\)-make_interval\(mins => \$3\)/);
   assert.deepEqual(captured.params, [10, 30, 60]);
+});
+
+test("countStale counts only PUSHER rows left PENDING past the max age", async () => {
+  let captured;
+  const n = await countStale(async (sql, params) => ((captured = { sql, params }), { rows: [{ n: 22 }] }), { maxAgeMinutes: 60 });
+  assert.equal(n, 22);
+  assert.match(captured.sql, /"Transport"='PUSHER' AND "Status"='PENDING' AND "CreatedAt"<NOW\(\)-make_interval\(mins => \$1\)/);
+  assert.deepEqual(captured.params, [60]);
+});
+
+test("startDispatcher warns about stale rows, and a failing stale query never stops dispatching", async () => {
+  const warnings = [];
+  const log = { warn: (m) => warnings.push(m) };
+  const run = async (staleQuery) => {
+    let passes = 0;
+    const q = async (sql) => {
+      if (sql.includes("COUNT(*)")) return staleQuery();
+      passes += 1;
+      return { rows: [] };
+    };
+    const stop = startDispatcher({ q, publish: async () => {}, intervalMs: 5, log, ...OPTS });
+    await new Promise((r) => setTimeout(r, 30));
+    stop();
+    return passes;
+  };
+  assert.ok((await run(async () => ({ rows: [{ n: 3 }] }))) >= 2);
+  assert.match(warnings[0], /3 PUSHER event\(s\) older than 60 min stay PENDING/);
+  warnings.length = 0;
+  assert.ok((await run(async () => { throw new Error("db down"); })) >= 2, "claim loop keeps running");
+  assert.deepEqual(warnings, [], "stale-count failure is not fatal or noisy");
+  assert.equal(await run(async () => ({ rows: [{ n: 0 }] })) >= 2, true);
+  assert.deepEqual(warnings, [], "no warning when nothing is stale");
 });
