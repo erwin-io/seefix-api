@@ -47,3 +47,4 @@
 |-- tests
     |-- backend-hardening.test.js
     |-- contracts.test.js
+|-- vercel.json
