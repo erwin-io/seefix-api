@@ -9,7 +9,6 @@ import {
   destroyAsset,
   reportImageRecord,
 } from "../cloudinary.js";
-import { agentClient, bestEffort } from "../agent-client.js";
 import {
   notifyRole,
   notifyReporterForWorkOrder,
@@ -642,13 +641,10 @@ router.post(
         });
         return { workOrder: submitted, actualMaterials: insertedMaterials };
       });
-      const trigger = await bestEffort(`completion process ${wo.Id}`, () =>
-        agentClient.processCompletion(wo.Id),
-      );
+      // CompletionAgentStatus PENDING: the Agent claims it from the database queue (no direct call).
       res.json({
         workOrder: row.workOrder,
         actualMaterials: row.actualMaterials,
-        completionAgentTriggered: trigger.ok,
       });
     } catch (e) {
       for (const item of uploaded)
@@ -660,15 +656,12 @@ router.post(
 router.get("/:id/completion-status", WORK_ROLES, async (req, res, next) => {
   try {
     await assertWorkAccess(req.params.id, req.user);
-    const attempt = await bestEffort("completion status", () =>
-      agentClient.completionStatus(req.params.id),
-    );
-    if (attempt.ok) return res.json(attempt.value);
+    // The database is the source of truth: the Agent writes its progress there.
     const r = await query(
       `SELECT "Id" AS "workOrderId","WorkOrderNo" AS "workOrderNo","Status" AS "workOrderStatus","CompletionAgentStatus" AS "completionAgentStatus","CompletionAgentAttemptCount" AS "attemptCount","CompletionAgentStartedAt" AS "startedAt","CompletionAgentCompletedAt" AS "completedAt","CompletionVisualResult" AS "visualResult","CompletionAssessmentJson" AS "assessment","CompletionAgentLastError" AS "lastError" FROM "dbo"."WorkOrders" WHERE "Id"=$1`,
       [req.params.id],
     );
-    res.json({ ...r.rows[0], source: "database", agentReachable: false });
+    res.json({ ...r.rows[0], source: "database" });
   } catch (e) {
     next(e);
   }

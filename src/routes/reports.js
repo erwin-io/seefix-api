@@ -7,7 +7,6 @@ import {
   createReport,
   getReportDetail,
 } from "../services/report-service.js";
-import { agentClient, bestEffort } from "../agent-client.js";
 import { presentReport, presentAgentStatus } from "../services/report-presentation.js";
 import { cancelReport } from "../services/report-cancellation.js";
 import { findActiveReport } from "../services/report-active-policy.js";
@@ -183,17 +182,7 @@ router.get("/:id/agent-status", async (req, res, next) => {
       }, detail.report, { reporter: req.user.role === "REPORTER" }));
     }
 
-    const attempt = await bestEffort(
-      "report status",
-      () => agentClient.reportStatus(req.params.id),
-    );
-
-    if (attempt.ok) {
-      return res.json(presentAgentStatus(attempt.value, detail.report, {
-        reporter: req.user.role === "REPORTER",
-      }));
-    }
-
+    // The database is the source of truth: the Agent writes its progress there.
     const result = await query(
       `SELECT
          "Id" AS "reportId",
@@ -212,7 +201,6 @@ router.get("/:id/agent-status", async (req, res, next) => {
     res.json(presentAgentStatus({
       ...result.rows[0],
       source: "database",
-      agentReachable: false,
     }, detail.report, { reporter: req.user.role === "REPORTER" }));
   } catch (error) {
     next(error);

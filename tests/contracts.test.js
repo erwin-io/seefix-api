@@ -47,9 +47,10 @@ test(
 
 
 test(
-  "agent report contract uses persisted report id",
+  "agent report contract: assessment is queued in the database, previews stay direct",
   () => {
-    assert.match(
+    // Initial assessment is never pushed to the Agent; it claims PENDING reports itself.
+    assert.doesNotMatch(
       agent,
       /\/api\/reports\/\$\{reportId\}\/process/,
     );
@@ -203,7 +204,13 @@ test(
       /"CompletedBy"/,
     );
 
+    // Completion assistance is queued (CompletionAgentStatus PENDING), never pushed to the Agent.
     assert.match(
+      work,
+      /"CompletionAgentStatus"='PENDING'/,
+    );
+
+    assert.doesNotMatch(
       agent,
       /completion\/process/,
     );

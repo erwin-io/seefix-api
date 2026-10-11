@@ -80,7 +80,8 @@ AI assesses, prioritizes, drafts, compares, warns, and monitors. Human-authorize
 
    `npm start`
 
-No static UI is served.
+No static UI is served. For the whole system (database, Agent host, worker, realtime, hosting) see
+[docs/SYSTEM_SETUP.md](docs/SYSTEM_SETUP.md).
 
 ## Report upload
 
@@ -91,7 +92,7 @@ No static UI is served.
 - `building`, `floor`, `roomOrArea` — optional fallback/snapshot location text when no configured location is selected.
 - `description`, `notes`, `gpsLat`, `gpsLng` — optional.
 
-After the report and images commit, Node best-effort triggers `seefix-agents`. PostgreSQL remains the durable queue, so a failed HTTP trigger does not lose the report.
+After the report and images commit, the report waits in PostgreSQL as `AgentStatus=PENDING`. The API does **not** call `seefix-agents`: the Agent claims pending work from the database, and `seefix-worker`'s `agent-retry` job re-queues failed attempts. A report is therefore accepted even while the Agent is down. Completion evidence works the same way (`CompletionAgentStatus=PENDING`).
 
 ## Human authority boundaries
 

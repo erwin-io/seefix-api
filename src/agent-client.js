@@ -91,14 +91,6 @@ export const agentClient = {
       timeoutMs: config.agentHealthTimeoutMs,
     }),
 
-  processReport: (reportId) =>
-    agentRequest(`/api/reports/${reportId}/process`, {
-      method: "POST",
-    }),
-
-  reportStatus: (reportId) =>
-    agentRequest(`/api/reports/${reportId}/status`),
-
   generateMaintenanceRequest: (reportId) =>
     agentRequest(
       `/api/reports/${reportId}/maintenance-request/generate`,
@@ -133,14 +125,6 @@ export const agentClient = {
     agentRequest(`/api/work-orders/${workOrderId}/review`, {
       method: "POST",
     }),
-
-  processCompletion: (workOrderId) =>
-    agentRequest(`/api/work-orders/${workOrderId}/completion/process`, {
-      method: "POST",
-    }),
-
-  completionStatus: (workOrderId) =>
-    agentRequest(`/api/work-orders/${workOrderId}/completion/status`),
 
   runMonitor: () =>
     agentRequest("/api/monitor/run", {
