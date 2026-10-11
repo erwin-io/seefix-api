@@ -11,7 +11,7 @@ All `/api/*` routes return JSON. Protected routes use `Authorization: Bearer <JW
 - `POST /api/reports` — multipart report submission; `images` is required.
 - `GET /api/reports/my` — current user's reports.
 - `GET /api/reports/:id` — report detail.
-- `GET /api/reports/:id/agent-status` — Agent state with DB fallback.
+- `GET /api/reports/:id/agent-status` — Agent progress, read from the database (the Agent writes it there; the API never calls the Agent for it).
 - `POST /api/reports/:id/verifications` — independent corroboration; owner self-verification is blocked.
 
 ## Notifications
@@ -45,8 +45,8 @@ All `/api/*` routes return JSON. Protected routes use `Authorization: Bearer <JW
 - `POST /api/work-orders/:id/updates`
 - `POST /api/work-orders/:id/people`
 - `POST /api/work-orders/:id/materials`
-- `POST /api/work-orders/:id/completion` — multipart completion evidence; queues Completion Agent.
-- `GET /api/work-orders/:id/completion-status`
+- `POST /api/work-orders/:id/completion` — multipart completion evidence; saves `CompletionAgentStatus=PENDING` for the Agent to claim (no direct Agent call).
+- `GET /api/work-orders/:id/completion-status` — completion-Agent progress, read from the database.
 
 ## Admin
 - `GET /api/admin/users`

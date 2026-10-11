@@ -6,7 +6,6 @@ import {
   reportImageRecord,
 } from "../cloudinary.js";
 import { ApiError } from "../errors.js";
-import { agentClient, bestEffort } from "../agent-client.js";
 import { createNotification } from "./notifications.js";
 import { presentReport } from "./report-presentation.js";
 import { assertNoActiveReport } from "./report-active-policy.js";
@@ -144,15 +143,11 @@ export async function createReport(user, fields, files) {
       return row;
     });
 
-    const trigger = await bestEffort(
-      `process report ${report.id}`,
-      () => agentClient.processReport(report.id),
-    );
-
+    // Saved as AgentStatus PENDING: the Agent claims it from the database queue (no direct call), and
+    // seefix-worker's agent-retry job re-queues failed attempts. The API never depends on the Agent being up.
     return {
       ...report,
       imageCount: uploaded.length,
-      agentTriggerAccepted: trigger.ok && trigger.value?.accepted === true,
     };
   } catch (error) {
     for (const item of uploaded) {
