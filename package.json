@@ -17,6 +17,7 @@
     "outbox:dispatch": "node scripts/outbox-dispatch.js"
   },
   "dependencies": {
+    "@vercel/functions": "^3.9.11",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.7.0",

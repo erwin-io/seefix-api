@@ -25,26 +25,34 @@ Use the values from your working `.env`. Do not commit them.
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | uploads |
 | `CORS_ORIGINS` | comma-separated web admin and app origins, for example `https://seefix-admin.vercel.app` |
 
-Realtime on Vercel:
+Realtime on Vercel (no long-lived process, so the API delivers OutboxEvents on demand):
 
 | Variable | Value | Why |
 |---|---|---|
-| `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | your Pusher app | sign client subscriptions (`/api/realtime/auth`) |
-| `OUTBOX_DISPATCHER` | `off` | no long-lived process on Vercel |
-| `REALTIME_CLIENTS_ENABLED` | `on` **only while** a dispatcher is running elsewhere | otherwise clients go "live" but receive nothing |
+| `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`, `PUSHER_CLUSTER` | your Pusher app | publish events and sign client subscriptions |
+| `OUTBOX_DISPATCHER` | `off` | the in-process loop can't run on serverless |
+| `OUTBOX_DISPATCH_AFTER_WRITE` | `on` | after each successful write request, deliver what it queued (`waitUntil`, ~1 s) |
+| `OUTBOX_CRON_SECRET` | a long random value | enables `POST /api/realtime/dispatch` for the external scheduler |
+| `REALTIME_CLIENTS_ENABLED` | `on` once the scheduler is set up | clients go "live" only when delivery is running |
 
 The other variables in `.env.example` are optional and have defaults.
 
-## Outbox dispatcher on an always-on host
-Pusher delivery needs one long-running process that reads `dbo.OutboxEvents` and publishes:
-```
-npm run outbox:dispatch
-```
-Run it on any always-on machine with Node.js and this repo. Give it the same `.env` as the API: it validates the
-same required settings, and needs `DATABASE_URL` (the same Neon database) and `PUSHER_*`. One instance is enough;
-a second is safe (row claims use `FOR UPDATE SKIP LOCKED`). On Windows, run it as a service, for example with NSSM:
-`node scripts/outbox-dispatch.js` with the repo folder as the working directory. See `docs/REALTIME_ROLLOUT.md` for
-the activation order and backout.
+## Delivery without an always-on machine
+- **API writes** (status changes, assignments, notifications) are delivered right after the response
+  (`OUTBOX_DISPATCH_AFTER_WRITE=on`).
+- **Everything else** (events the Agent writes, anything missed after a crash or a Pusher outage) is delivered when
+  something calls the protected endpoint:
+  ```
+  POST https://<your-api>.vercel.app/api/realtime/dispatch
+  Authorization: Bearer <OUTBOX_CRON_SECRET>
+  ```
+  Response: `{"passes":1,"claimed":2,"sent":2,"retried":0,"failed":0,"expired":0}`. It returns 404 when the secret
+  isn't configured, 401 for a wrong secret, and 503 when Pusher isn't configured.
+- **Scheduler:** a free external cron such as cron-job.org, every 1 minute, `POST` with the header above.
+  Vercel Cron also works (it sends the same `Authorization: Bearer` header), but Hobby cron runs at most once per day.
+- Overlapping calls are safe: delivery reuses the outbox claim (`FOR UPDATE SKIP LOCKED`), retries, the 60-minute age
+  cap and lease rules, so a row is never sent twice by concurrent calls. One call drains at most 10 batches within 20 s.
+- Self-hosted alternative: `npm run outbox:dispatch` on an always-on machine (see `docs/REALTIME_ROLLOUT.md`).
 
 ## Known limits on Vercel
 - **Request body limit: 4.5 MB.** Photo and document uploads larger than that fail with `413 FUNCTION_PAYLOAD_TOO_LARGE`,

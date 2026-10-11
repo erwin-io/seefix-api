@@ -164,6 +164,10 @@ export const config = Object.freeze({
   // Opt-in: advertise realtime to clients only after a publisher (this instance or a dedicated
   // `npm run outbox:dispatch` worker) is confirmed healthy. Off = clients poll, whatever PUSHER_* says.
   realtimeClientsEnabled: String(process.env.REALTIME_CLIENTS_ENABLED || "off").trim().toLowerCase() === "on",
+  // Serverless delivery (no long-lived loop): POST /api/realtime/dispatch with this secret (external cron / Agent),
+  // and an optional drain after each successful write request. See docs/VERCEL_DEPLOY.md.
+  outboxCronSecret: String(process.env.OUTBOX_CRON_SECRET || "").trim(),
+  outboxDispatchAfterWrite: String(process.env.OUTBOX_DISPATCH_AFTER_WRITE || "off").trim().toLowerCase() === "on",
   outboxPollMs: intEnv("OUTBOX_POLL_MS", 2000, 200),
   outboxBatchSize: intEnv("OUTBOX_BATCH_SIZE", 10, 1),
   outboxMaxAttempts: intEnv("OUTBOX_MAX_ATTEMPTS", 8, 1),
