@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { ApiError } from "./errors.js";
 
 let configured = false;
-function ensureConfigured() {
+export function ensureCloudinary() {
   if (configured) return;
   if (!config.cloudinaryCloudName || !config.cloudinaryApiKey || !config.cloudinaryApiSecret) {
     throw new ApiError(500, "Cloudinary configuration is required for evidence uploads.", "CLOUDINARY_NOT_CONFIGURED");
@@ -13,7 +13,7 @@ function ensureConfigured() {
 }
 
 export function uploadBuffer(buffer, { folder, resourceType = "image", publicId } = {}) {
-  ensureConfigured();
+  ensureCloudinary();
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       { folder, resource_type: resourceType, ...(publicId ? { public_id: publicId } : {}) },
@@ -25,7 +25,7 @@ export function uploadBuffer(buffer, { folder, resourceType = "image", publicId 
 
 export async function destroyAsset(publicId, resourceType = "image") {
   try {
-    ensureConfigured();
+    ensureCloudinary();
     await cloudinary.uploader.destroy(publicId, { resource_type: resourceType, invalidate: true });
   } catch (error) { console.warn("[CLOUDINARY] Cleanup failed:", error.message); }
 }

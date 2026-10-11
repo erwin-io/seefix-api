@@ -5,7 +5,7 @@ import { ApiError } from "./errors.js";
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 export const memoryUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: config.maxReportImages },
+  limits: { fileSize: config.maxUploadBytes, files: config.maxReportImages },
 });
 
 export function requireImageFiles(files, { min = 1 } = {}) {

@@ -131,10 +131,12 @@ export const config = Object.freeze({
     process.env.CLOUDINARY_DOCUMENT_FOLDER ||
     "seefix/procurement",
 
-  maxUploadMb: intEnv(
-    "MAX_UPLOAD_MB",
-    10,
-    1,
+  // Per-file limit for every upload path (multipart and direct-to-Cloudinary). 4.5 MB keeps a single-file
+  // request under Vercel's request-body cap; direct uploads aren't subject to that cap at all.
+  maxUploadBytes: intEnv(
+    "MAX_UPLOAD_BYTES",
+    4500000,
+    1024,
   ),
 
   maxReportImages: intEnv(

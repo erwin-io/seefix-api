@@ -19,7 +19,13 @@ router.post(
   memoryUpload.array("images"),
   async (req, res, next) => {
     try {
-      const files = requireImageFiles(req.files, { min: 1 });
+      // New clients upload straight to Cloudinary (POST /api/uploads/sign) and send JSON imagePublicIds;
+      // older clients still send multipart `images`. One request uses one way.
+      const imagePublicIds = req.body?.imagePublicIds;
+      if (imagePublicIds != null && req.files?.length) {
+        throw new ApiError(400, "Send either images or imagePublicIds, not both.", "VALIDATION_ERROR");
+      }
+      const files = imagePublicIds == null ? requireImageFiles(req.files, { min: 1 }) : [];
 
       const gpsLat =
         req.body.gpsLat == null || req.body.gpsLat === ""
@@ -65,7 +71,7 @@ router.post(
           gpsLat,
           gpsLng,
         },
-        files,
+        { files, imagePublicIds },
       );
 
       res.status(201).json(report);

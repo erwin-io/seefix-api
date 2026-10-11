@@ -11,7 +11,7 @@ export function errorHandler(error, _req, res, _next) {
   let mapped = mapDatabaseError(error);
   if (mapped instanceof multer.MulterError) {
     mapped = mapped.code === "LIMIT_FILE_SIZE"
-      ? new ApiError(413, `Uploaded file exceeds the ${config.maxUploadMb} MB limit.`, "FILE_TOO_LARGE")
+      ? new ApiError(413, `Uploaded file exceeds the ${(config.maxUploadBytes / 1e6).toFixed(1)} MB limit.`, "FILE_TOO_LARGE")
       : new ApiError(400, mapped.message, "UPLOAD_ERROR");
   }
   const status = mapped instanceof ApiError ? mapped.status : 500;
