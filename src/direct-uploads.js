@@ -8,6 +8,8 @@
  * - claimUploads(): before an upload is used, looks it up in Cloudinary and checks owner, purpose, type, size
  *   (images 10 MB, documents 15 MB) and that it isn't already attached to a record. Returns Cloudinary results in the same
  *   shape as uploader responses, so the existing persistence code is unchanged.
+ * - lockUnusedUploads(): inside the transaction that saves the uploads, locks each public ID and re-checks it is
+ *   unused, so two concurrent requests can't attach the same upload to two records.
  * - Unclaimed uploads keep the pending tag; seefix-worker's cleanup removes them later.
  */
 import { v2 as cloudinary } from "cloudinary";
@@ -124,4 +126,20 @@ export async function claimUploads(user, purpose, refs, { max = config.maxReport
     results.push(resource);
   }
   return results;
+}
+
+/**
+ * Call inside the transaction that saves the uploads, before inserting them. Takes a transaction-scoped lock per
+ * public ID (sorted, so overlapping concurrent claims can't deadlock), then re-checks every ID is unused. A concurrent
+ * request for the same ID waits on the lock until this transaction ends, then sees the committed row and gets 409.
+ */
+export async function lockUnusedUploads(client, publicIds) {
+  const ids = [...new Set(publicIds)].sort();
+  for (const id of ids) {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`seefix:upload:${id}`]);
+  }
+  const q = client.query.bind(client);
+  for (const id of ids) {
+    if (await alreadyUsed(q, id)) throw new ApiError(409, `Upload ${id} is already attached to a record.`, "UPLOAD_ALREADY_USED");
+  }
 }

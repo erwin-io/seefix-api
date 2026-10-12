@@ -2,6 +2,7 @@ import { Router } from "express";
 import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
+import { imageUpload, requireImageFiles } from "../uploads.js";
 import {
   createReport,
   getReportDetail,
@@ -15,10 +16,16 @@ router.use(requireAuth);
 
 router.post(
   "/",
+  imageUpload.array("images"),
   async (req, res, next) => {
     try {
-      // Images are uploaded straight to Cloudinary (POST /api/uploads/sign); the body carries their public IDs.
+      // New clients upload straight to Cloudinary (POST /api/uploads/sign) and send JSON imagePublicIds;
+      // older clients still send multipart `images`. One request uses one way.
       const imagePublicIds = req.body?.imagePublicIds;
+      if (imagePublicIds != null && req.files?.length) {
+        throw new ApiError(400, "Send either images or imagePublicIds, not both.", "VALIDATION_ERROR");
+      }
+      const files = imagePublicIds == null ? requireImageFiles(req.files, { min: 1 }) : [];
 
       const gpsLat =
         req.body.gpsLat == null || req.body.gpsLat === ""
@@ -64,7 +71,7 @@ router.post(
           gpsLat,
           gpsLng,
         },
-        imagePublicIds,
+        { files, imagePublicIds },
       );
 
       res.status(201).json(report);

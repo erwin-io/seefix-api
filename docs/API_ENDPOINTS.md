@@ -14,12 +14,17 @@ Files never pass through the API (so Vercel's 4.5 MB body limit doesn't apply):
 2. The client POSTs each file to `uploadUrl` as multipart: every entry of `fields` plus `file`. The signature (valid
    1 hour) fixes the folder, formats and tags, so they can't be changed.
 3. The client sends the resulting `public_id`s to the endpoint below. The API checks each upload in Cloudinary
-   (uploader, purpose, type, size, not already used) before saving it.
+   (uploader, purpose, type, size, not already used) before saving it, and locks each ID inside the saving
+   transaction so concurrent requests can't attach the same upload twice (the second gets 409 `UPLOAD_ALREADY_USED`).
+
+**Legacy multipart** (clients released before direct uploads) still works on the same three endpoints: `images`
+(reports, completion) or `file` (documents), same type and size limits. Requests through Vercel are capped at 4.5 MB
+in total. A request uses one format; sending both is a 400. To be removed once every installed client is updated.
 
 Uploads never attached to a record are removed later by seefix-worker's `upload-cleanup` job.
 
 ## Reporter / reports
-- `POST /api/reports` — JSON report submission; `imagePublicIds` (1–5 `report-image` uploads) is required.
+- `POST /api/reports` — JSON with `imagePublicIds` (1–5 `report-image` uploads), or legacy multipart `images`.
 - `GET /api/reports/my` — current user's reports.
 - `GET /api/reports/:id` — report detail.
 - `GET /api/reports/:id/agent-status` — Agent progress, read from the database (the Agent writes it there; the API never calls the Agent for it).
@@ -45,7 +50,7 @@ Uploads never attached to a record are removed later by seefix-worker's `upload-
 - `POST /api/procurement/handoffs/:id/acknowledge`
 - `POST /api/procurement/handoffs/:id/start`
 - `POST /api/procurement/handoffs/:id/clarifications`
-- `POST /api/procurement/handoffs/:id/documents` — JSON `{ publicId, resourceType, fileName?, mimeType?, documentType?, clarificationId? }` from a `procurement-document` upload.
+- `POST /api/procurement/handoffs/:id/documents` — JSON `{ publicId, resourceType, fileName?, mimeType?, documentType?, clarificationId? }` from a `procurement-document` upload, or legacy multipart `file`.
 - `POST /api/procurement/handoffs/:id/outcome` — records only final execution facts; no bidding/provider ranking.
 
 ## Work Orders
@@ -56,7 +61,7 @@ Uploads never attached to a record are removed later by seefix-worker's `upload-
 - `POST /api/work-orders/:id/updates`
 - `POST /api/work-orders/:id/people`
 - `POST /api/work-orders/:id/materials`
-- `POST /api/work-orders/:id/completion` — JSON completion evidence (`repairNotes`, `imagePublicIds` from `completion-image` uploads, …); saves `CompletionAgentStatus=PENDING` for the Agent to claim (no direct Agent call).
+- `POST /api/work-orders/:id/completion` — completion evidence: JSON (`repairNotes`, `imagePublicIds` from `completion-image` uploads, …) or legacy multipart `images`; saves `CompletionAgentStatus=PENDING` for the Agent to claim (no direct Agent call).
 - `GET /api/work-orders/:id/completion-status` — completion-Agent progress, read from the database.
 
 ## Admin
