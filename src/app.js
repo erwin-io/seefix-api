@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import { config } from "./config.js";
+import { config, validateRuntimeConfig } from "./config.js";
 import { databaseHealth } from "./database.js";
 import { agentClient, bestEffort } from "./agent-client.js";
 import authRoutes from "./routes/auth.js";
@@ -74,3 +74,8 @@ app.use("/api/realtime", realtimeRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use(notFound);
 app.use(errorHandler);
+
+// Vercel's Express preset uses this file (it imports express) as the function entry, not server.js:
+// it needs a default export, and server.js's startup config check doesn't run there.
+if (process.env.VERCEL) validateRuntimeConfig();
+export default app;
