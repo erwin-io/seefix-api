@@ -14,6 +14,7 @@ import adminRoutes from "./routes/admin.js";
 import adminKnowledgeRoutes from "./routes/admin-knowledge.js";
 import realtimeRoutes from "./routes/realtime.js";
 import uploadRoutes from "./routes/uploads.js";
+import { dispatchAfterWrite } from "./realtime/dispatch-now.js";
 import { notFound, errorHandler } from "./middleware/errors.js";
 
 export const app = express();
@@ -59,6 +60,7 @@ app.get("/health", async (_req, res) => {
       },
     });
 });
+if (config.outboxDispatchAfterWrite) app.use("/api", dispatchAfterWrite());
 app.use("/api/auth", authRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/notifications", notificationRoutes);

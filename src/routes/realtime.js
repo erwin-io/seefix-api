@@ -4,9 +4,24 @@ import { query } from "../database.js";
 import { ApiError } from "../errors.js";
 import { requireAuth } from "../middleware/auth.js";
 import { canSubscribe, channel } from "../realtime/channels.js";
-import { authorizeChannel, clientRealtimeEnabled } from "../realtime/pusher-client.js";
+import { dispatchNow, hasDispatchSecret } from "../realtime/dispatch-now.js";
+import { authorizeChannel, clientRealtimeEnabled, realtimeEnabled } from "../realtime/pusher-client.js";
 
 const router = Router();
+
+// Machine-to-machine (external cron, the Agent): deliver pending OutboxEvents on hosts without a dispatcher loop.
+// Registered before requireAuth; guarded by OUTBOX_CRON_SECRET instead of a user token. 404 when not configured.
+router.post("/dispatch", async (req, res, next) => {
+  try {
+    if (!config.outboxCronSecret) throw new ApiError(404, "Not found.", "NOT_FOUND");
+    if (!hasDispatchSecret(req.get("authorization"))) throw new ApiError(401, "Invalid dispatch secret.", "UNAUTHORIZED");
+    if (!realtimeEnabled) throw new ApiError(503, "Realtime is not configured.", "REALTIME_DISABLED");
+    res.json(await dispatchNow());
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.use(requireAuth);
 
 // Public key/cluster only; the secret never leaves the server. enabled:false keeps clients polling.

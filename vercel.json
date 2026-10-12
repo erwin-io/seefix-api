@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["cle1"],
+  "functions": { "server.js": { "maxDuration": 60 } }
+}
