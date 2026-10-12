@@ -7,8 +7,19 @@ All `/api/*` routes return JSON. Protected routes use `Authorization: Bearer <JW
 - `POST /api/auth/login` — login for every SEEFIX role.
 - `GET /api/auth/me` — current authenticated user.
 
+## Uploads (direct to Cloudinary)
+Files never pass through the API (so Vercel's 4.5 MB body limit doesn't apply):
+1. `POST /api/uploads/sign` with `{ "purpose": "report-image" | "completion-image" | "procurement-document" }` returns
+   `{ uploadUrl, fields, maxBytes, allowedFormats, expiresAt }`. Limits: images 10 MB (JPEG/PNG/WebP), documents 15 MB.
+2. The client POSTs each file to `uploadUrl` as multipart: every entry of `fields` plus `file`. The signature (valid
+   1 hour) fixes the folder, formats and tags, so they can't be changed.
+3. The client sends the resulting `public_id`s to the endpoint below. The API checks each upload in Cloudinary
+   (uploader, purpose, type, size, not already used) before saving it.
+
+Uploads never attached to a record are removed later by seefix-worker's `upload-cleanup` job.
+
 ## Reporter / reports
-- `POST /api/reports` — multipart report submission; `images` is required.
+- `POST /api/reports` — JSON report submission; `imagePublicIds` (1–5 `report-image` uploads) is required.
 - `GET /api/reports/my` — current user's reports.
 - `GET /api/reports/:id` — report detail.
 - `GET /api/reports/:id/agent-status` — Agent progress, read from the database (the Agent writes it there; the API never calls the Agent for it).
@@ -34,7 +45,7 @@ All `/api/*` routes return JSON. Protected routes use `Authorization: Bearer <JW
 - `POST /api/procurement/handoffs/:id/acknowledge`
 - `POST /api/procurement/handoffs/:id/start`
 - `POST /api/procurement/handoffs/:id/clarifications`
-- `POST /api/procurement/handoffs/:id/documents`
+- `POST /api/procurement/handoffs/:id/documents` — JSON `{ publicId, resourceType, fileName?, mimeType?, documentType?, clarificationId? }` from a `procurement-document` upload.
 - `POST /api/procurement/handoffs/:id/outcome` — records only final execution facts; no bidding/provider ranking.
 
 ## Work Orders
@@ -45,7 +56,7 @@ All `/api/*` routes return JSON. Protected routes use `Authorization: Bearer <JW
 - `POST /api/work-orders/:id/updates`
 - `POST /api/work-orders/:id/people`
 - `POST /api/work-orders/:id/materials`
-- `POST /api/work-orders/:id/completion` — multipart completion evidence; saves `CompletionAgentStatus=PENDING` for the Agent to claim (no direct Agent call).
+- `POST /api/work-orders/:id/completion` — JSON completion evidence (`repairNotes`, `imagePublicIds` from `completion-image` uploads, …); saves `CompletionAgentStatus=PENDING` for the Agent to claim (no direct Agent call).
 - `GET /api/work-orders/:id/completion-status` — completion-Agent progress, read from the database.
 
 ## Admin

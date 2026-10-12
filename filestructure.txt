@@ -42,7 +42,6 @@
         |-- report-service.js
         |-- settings.js
         |-- work-order-service.js
-    |-- uploads.js
     |-- utils
         |-- materials.js
 |-- tests

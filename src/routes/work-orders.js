@@ -1,15 +1,9 @@
 import { Router } from "express";
-import { config } from "../config.js";
 import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
-import { memoryUpload, requireImageFiles } from "../uploads.js";
 import { claimUploads } from "../direct-uploads.js";
-import {
-  uploadBuffer,
-  destroyAsset,
-  reportImageRecord,
-} from "../cloudinary.js";
+import { reportImageRecord } from "../cloudinary.js";
 import {
   notifyRole,
   notifyReporterForWorkOrder,
@@ -547,9 +541,7 @@ router.post("/:id/materials", WORK_ROLES, async (req, res, next) => {
 router.post(
   "/:id/completion",
   WORK_ROLES,
-  memoryUpload.array("images"),
   async (req, res, next) => {
-    const uploaded = [];
     try {
       const wo = await assertWorkAccess(req.params.id, req.user);
       if (wo.Status !== "IN_PROGRESS")
@@ -558,25 +550,12 @@ router.post(
           "Completion can only be submitted from IN_PROGRESS.",
           "INVALID_WORK_ORDER_STATE",
         );
-      // Direct uploads send JSON imagePublicIds; older clients send multipart `images`.
-      const imagePublicIds = req.body?.imagePublicIds;
-      if (imagePublicIds != null && req.files?.length)
-        throw new ApiError(400, "Send either images or imagePublicIds, not both.", "VALIDATION_ERROR");
-      const files = imagePublicIds == null ? requireImageFiles(req.files, { min: 1 }) : [];
       const repairNotes = String(req.body?.repairNotes || "").trim();
       if (!repairNotes)
         throw new ApiError(400, "repairNotes is required.", "VALIDATION_ERROR");
       const actualMaterials = parseActualMaterials(req.body?.actualMaterials);
-      const images = imagePublicIds != null
-        ? await claimUploads(req.user, "completion-image", imagePublicIds)
-        : uploaded; // `uploaded` holds only this request's own uploads (deleted on failure)
-      for (const file of files)
-        uploaded.push(
-          await uploadBuffer(file.buffer, {
-            folder: config.cloudinaryWorkOrderFolder,
-            resourceType: "image",
-          }),
-        );
+      // Images are uploaded straight to Cloudinary (POST /api/uploads/sign); the body carries their public IDs.
+      const images = await claimUploads(req.user, "completion-image", req.body?.imagePublicIds);
       const row = await withTransaction(req.user.id, async (c) => {
         for (const result of images) {
           const img = reportImageRecord(result, false);
@@ -655,8 +634,6 @@ router.post(
         actualMaterials: row.actualMaterials,
       });
     } catch (e) {
-      for (const item of uploaded)
-        await destroyAsset(item.public_id, item.resource_type || "image");
       next(e);
     }
   },

@@ -1,10 +1,5 @@
-import { config } from "../config.js";
 import { withTransaction, query } from "../database.js";
-import {
-  uploadBuffer,
-  destroyAsset,
-  reportImageRecord,
-} from "../cloudinary.js";
+import { reportImageRecord } from "../cloudinary.js";
 import { claimUploads } from "../direct-uploads.js";
 import { ApiError } from "../errors.js";
 import { createNotification } from "./notifications.js";
@@ -52,119 +47,95 @@ async function resolveLocation(client, fields) {
   };
 }
 
-export async function createReport(user, fields, { files = [], imagePublicIds } = {}) {
-  // Quick check before Cloudinary uploads. The transactional recheck and
+export async function createReport(user, fields, imagePublicIds) {
+  // Quick check before the Cloudinary lookups. The transactional recheck and
   // database unique index remain authoritative for concurrent requests.
   await assertNoActiveReport(query, user.id);
-  // Only files this request uploaded are deleted on failure. Direct uploads stay so the client can retry;
-  // unused ones are removed by seefix-worker's cleanup.
-  const ownUploads = [];
+  // Uploads are kept on failure so the client can retry; unused ones are removed by seefix-worker's cleanup.
+  const uploaded = await claimUploads(user, "report-image", imagePublicIds);
 
-  try {
-    let uploaded;
-    if (imagePublicIds != null) {
-      uploaded = await claimUploads(user, "report-image", imagePublicIds);
-    } else {
-      for (const file of files) {
-        ownUploads.push(
-          await uploadBuffer(file.buffer, {
-            folder: config.cloudinaryReportFolder,
-            resourceType: "image",
-          }),
-        );
-      }
-      uploaded = ownUploads;
-    }
+  const report = await withTransaction(user.id, async (client) => {
+    // Serialize report creation by Reporter across concurrent HTTP workers.
+    // This lock is only a performance improvement; the partial unique index
+    // protects direct DB writes and any other API deployment too.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
+      [`seefix:active-report:${user.id}`],
+    );
+    await assertNoActiveReport(client.query.bind(client), user.id);
+    const location = await resolveLocation(client, fields);
 
-    const report = await withTransaction(user.id, async (client) => {
-      // Serialize report creation by Reporter across concurrent HTTP workers.
-      // This lock is only a performance improvement; the partial unique index
-      // protects direct DB writes and any other API deployment too.
+    const inserted = await client.query(
+      `INSERT INTO "dbo"."Reports"
+         ("ReporterId","Description","Notes","LocationId",
+          "Building","Floor","RoomOrArea","GpsLat","GpsLng")
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING
+         "Id" AS id,
+         "ReportNo" AS "reportNo",
+         "Status" AS status,
+         "AgentStatus" AS "agentStatus",
+         "CreatedAt" AS "createdAt"`,
+      [
+        user.id,
+        fields.description || null,
+        fields.notes || null,
+        location.locationId,
+        location.building,
+        location.floor,
+        location.roomOrArea,
+        fields.gpsLat ?? null,
+        fields.gpsLng ?? null,
+      ],
+    );
+
+    const row = inserted.rows[0];
+
+    for (let i = 0; i < uploaded.length; i += 1) {
+      const image = reportImageRecord(uploaded[i], i === 0);
+
       await client.query(
-        "SELECT pg_advisory_xact_lock(hashtext($1)::bigint)",
-        [`seefix:active-report:${user.id}`],
-      );
-      await assertNoActiveReport(client.query.bind(client), user.id);
-      const location = await resolveLocation(client, fields);
-
-      const inserted = await client.query(
-        `INSERT INTO "dbo"."Reports"
-           ("ReporterId","Description","Notes","LocationId",
-            "Building","Floor","RoomOrArea","GpsLat","GpsLng")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         RETURNING
-           "Id" AS id,
-           "ReportNo" AS "reportNo",
-           "Status" AS status,
-           "AgentStatus" AS "agentStatus",
-           "CreatedAt" AS "createdAt"`,
+        `INSERT INTO "dbo"."ReportImages"
+           ("ReportId","CloudinaryAssetId","PublicId","SecureUrl",
+            "Version","Format","Width","Height","Bytes","ResourceType","IsPrimary")
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
-          user.id,
-          fields.description || null,
-          fields.notes || null,
-          location.locationId,
-          location.building,
-          location.floor,
-          location.roomOrArea,
-          fields.gpsLat ?? null,
-          fields.gpsLng ?? null,
+          row.id,
+          image.cloudinaryAssetId,
+          image.publicId,
+          image.secureUrl,
+          image.version,
+          image.format,
+          image.width,
+          image.height,
+          image.bytes,
+          image.resourceType,
+          image.isPrimary,
         ],
       );
-
-      const row = inserted.rows[0];
-
-      for (let i = 0; i < uploaded.length; i += 1) {
-        const image = reportImageRecord(uploaded[i], i === 0);
-
-        await client.query(
-          `INSERT INTO "dbo"."ReportImages"
-             ("ReportId","CloudinaryAssetId","PublicId","SecureUrl",
-              "Version","Format","Width","Height","Bytes","ResourceType","IsPrimary")
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-          [
-            row.id,
-            image.cloudinaryAssetId,
-            image.publicId,
-            image.secureUrl,
-            image.version,
-            image.format,
-            image.width,
-            image.height,
-            image.bytes,
-            image.resourceType,
-            image.isPrimary,
-          ],
-        );
-      }
-
-      await createNotification(client, {
-        userId: user.id,
-        type: "REPORT_SUBMITTED",
-        title: "Report submitted",
-        message: `Report ${row.reportNo} was submitted and queued for assessment.`,
-        entityType: "REPORT",
-        entityId: row.id,
-        payload: { reportNo: row.reportNo },
-        deduplicationKey: `report:${row.id}:submitted`,
-        createdAt: row.createdAt,
-      });
-
-      return row;
-    });
-
-    // Saved as AgentStatus PENDING: the Agent claims it from the database queue (no direct call), and
-    // seefix-worker's agent-retry job re-queues failed attempts. The API never depends on the Agent being up.
-    return {
-      ...report,
-      imageCount: uploaded.length,
-    };
-  } catch (error) {
-    for (const item of ownUploads) {
-      await destroyAsset(item.public_id, item.resource_type || "image");
     }
 
-    throw error;
-  }
+    await createNotification(client, {
+      userId: user.id,
+      type: "REPORT_SUBMITTED",
+      title: "Report submitted",
+      message: `Report ${row.reportNo} was submitted and queued for assessment.`,
+      entityType: "REPORT",
+      entityId: row.id,
+      payload: { reportNo: row.reportNo },
+      deduplicationKey: `report:${row.id}:submitted`,
+      createdAt: row.createdAt,
+    });
+
+    return row;
+  });
+
+  // Saved as AgentStatus PENDING: the Agent claims it from the database queue (no direct call), and
+  // seefix-worker's agent-retry job re-queues failed attempts. The API never depends on the Agent being up.
+  return {
+    ...report,
+    imageCount: uploaded.length,
+  };
 }
 
 export async function getReportDetail(reportId, user) {

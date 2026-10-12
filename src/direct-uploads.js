@@ -6,7 +6,7 @@
  * - signUpload(): checks the user may upload for the purpose, then signs the upload parameters. The signature
  *   fixes the folder, allowed formats and tags (pending + owner + purpose), so the client can't change them.
  * - claimUploads(): before an upload is used, looks it up in Cloudinary and checks owner, purpose, type, size
- *   (MAX_UPLOAD_BYTES) and that it isn't already attached to a record. Returns Cloudinary results in the same
+ *   (images 10 MB, documents 15 MB) and that it isn't already attached to a record. Returns Cloudinary results in the same
  *   shape as uploader responses, so the existing persistence code is unchanged.
  * - Unclaimed uploads keep the pending tag; seefix-worker's cleanup removes them later.
  */
@@ -21,13 +21,16 @@ export const ownerTag = (userId) => `seefix-owner-${userId}`;
 export const purposeTag = (purpose) => `seefix-purpose-${purpose}`;
 
 const IMAGE_FORMATS = ["jpg", "png", "webp"];
+// Clients enforce the same limits before uploading; these are the server-side check.
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
 const WORK_ROLES = ["MAINTENANCE_STAFF", "MAINTENANCE_SUPERVISOR", "WORKER", "ADMIN"];
 
 export const PURPOSES = {
-  "report-image": { roles: null, resourceType: "image", formats: IMAGE_FORMATS, folder: () => config.cloudinaryReportFolder },
-  "completion-image": { roles: WORK_ROLES, resourceType: "image", formats: IMAGE_FORMATS, folder: () => config.cloudinaryWorkOrderFolder },
+  "report-image": { roles: null, resourceType: "image", formats: IMAGE_FORMATS, maxBytes: MAX_IMAGE_BYTES, folder: () => config.cloudinaryReportFolder },
+  "completion-image": { roles: WORK_ROLES, resourceType: "image", formats: IMAGE_FORMATS, maxBytes: MAX_IMAGE_BYTES, folder: () => config.cloudinaryWorkOrderFolder },
   // Documents may be PDFs, office files or images; Cloudinary stores them as "image" or "raw".
-  "procurement-document": { roles: ["PROCUREMENT", "ADMIN"], resourceType: "auto", formats: null, folder: () => config.cloudinaryDocumentFolder },
+  "procurement-document": { roles: ["PROCUREMENT", "ADMIN"], resourceType: "auto", formats: null, maxBytes: MAX_DOCUMENT_BYTES, folder: () => config.cloudinaryDocumentFolder },
 };
 
 const SIGNATURE_LIFETIME_SECONDS = 3600; // Cloudinary accepts a signed timestamp for one hour
@@ -57,7 +60,7 @@ export function signUpload(user, purpose, { credentials = defaultCredentials(), 
   return {
     uploadUrl: `https://api.cloudinary.com/v1_1/${credentials.cloudName}/${p.resourceType}/upload`,
     fields: { ...params, api_key: credentials.apiKey, signature: cloudinary.utils.api_sign_request(params, credentials.apiSecret) },
-    maxBytes: config.maxUploadBytes,
+    maxBytes: p.maxBytes,
     allowedFormats: p.formats,
     expiresAt: new Date((timestamp + SIGNATURE_LIFETIME_SECONDS) * 1000).toISOString(),
   };
@@ -114,8 +117,8 @@ export async function claimUploads(user, purpose, refs, { max = config.maxReport
     if (p.formats && (resource.resource_type !== "image" || !p.formats.includes(String(resource.format).toLowerCase()))) {
       throw new ApiError(415, "Images must be JPEG, PNG, or WebP.", "UNSUPPORTED_IMAGE_TYPE");
     }
-    if (!(Number(resource.bytes) > 0) || Number(resource.bytes) > config.maxUploadBytes) {
-      throw new ApiError(413, `Upload ${publicId} exceeds the ${(config.maxUploadBytes / 1e6).toFixed(1)} MB limit.`, "FILE_TOO_LARGE");
+    if (!(Number(resource.bytes) > 0) || Number(resource.bytes) > p.maxBytes) {
+      throw new ApiError(413, `Upload ${publicId} exceeds the ${p.maxBytes / 1024 / 1024} MB limit.`, "FILE_TOO_LARGE");
     }
     if (await alreadyUsed(q, publicId)) throw new ApiError(409, `Upload ${publicId} is already attached to a record.`, "UPLOAD_ALREADY_USED");
     results.push(resource);

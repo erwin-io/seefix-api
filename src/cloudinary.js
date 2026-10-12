@@ -12,23 +12,6 @@ export function ensureCloudinary() {
   configured = true;
 }
 
-export function uploadBuffer(buffer, { folder, resourceType = "image", publicId } = {}) {
-  ensureCloudinary();
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(
-      { folder, resource_type: resourceType, ...(publicId ? { public_id: publicId } : {}) },
-      (error, result) => error ? reject(error) : resolve(result),
-    );
-    stream.end(buffer);
-  });
-}
-
-export async function destroyAsset(publicId, resourceType = "image") {
-  try {
-    ensureCloudinary();
-    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType, invalidate: true });
-  } catch (error) { console.warn("[CLOUDINARY] Cleanup failed:", error.message); }
-}
 
 export function reportImageRecord(result, isPrimary = false) {
   return {

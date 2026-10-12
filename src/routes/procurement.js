@@ -5,9 +5,7 @@ import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { agentClient, bestEffort } from "../agent-client.js";
 import { notifyRole } from "../services/notifications.js";
 import { ensureWorkOrderForOutcome } from "../services/work-order-service.js";
-import { memoryUpload } from "../uploads.js";
-import { uploadBuffer, destroyAsset } from "../cloudinary.js";
-import { config } from "../config.js";
+import { claimUploads } from "../direct-uploads.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -339,18 +337,21 @@ router.post(
 router.post(
   "/handoffs/:id/documents",
   requireRoles("PROCUREMENT", "ADMIN"),
-  memoryUpload.single("file"),
   async (req, res, next) => {
-    let uploaded = null;
-
     try {
-      if (!req.file) {
+      // The file is uploaded straight to Cloudinary (POST /api/uploads/sign, purpose "procurement-document");
+      // the body carries { publicId, resourceType, fileName?, mimeType? } from the upload result.
+      const publicId = req.body?.publicId;
+      if (!publicId) {
         throw new ApiError(
           400,
           "A document file is required.",
           "DOCUMENT_REQUIRED",
         );
       }
+      // Display-only metadata from the client; truncated to the column sizes.
+      const fileName = String(req.body?.fileName || "").trim().slice(0, 255) || null;
+      const mimeType = String(req.body?.mimeType || "").trim().slice(0, 150) || null;
 
       const type = String(
         req.body?.documentType || "OTHER",
@@ -408,13 +409,10 @@ router.post(
         }
       }
 
-      uploaded = await uploadBuffer(
-        req.file.buffer,
-        {
-          folder:
-            config.cloudinaryDocumentFolder,
-          resourceType: "auto",
-        },
+      const [uploaded] = await claimUploads(
+        req.user,
+        "procurement-document",
+        [{ publicId, resourceType: req.body?.resourceType }],
       );
 
       const result = await withTransaction(
@@ -435,11 +433,9 @@ router.post(
               type,
               uploaded.public_id,
               uploaded.secure_url,
-              req.file.originalname || null,
-              req.file.mimetype || null,
-              req.file.size ||
-                uploaded.bytes ||
-                null,
+              fileName,
+              mimeType,
+              uploaded.bytes || null,
               req.user.id,
             ],
           ),
@@ -449,13 +445,6 @@ router.post(
         document: result.rows[0],
       });
     } catch (error) {
-      if (uploaded) {
-        await destroyAsset(
-          uploaded.public_id,
-          uploaded.resource_type || "raw",
-        );
-      }
-
       next(error);
     }
   },
