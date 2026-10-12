@@ -22,14 +22,10 @@ app.disable("x-powered-by");
 app.set("trust proxy", 1);
 if (config.corsOrigins.length) {
   app.use(
-    cors({
-      origin(origin, cb) {
-        if (!origin || config.corsOrigins.includes(origin))
-          return cb(null, true);
-        cb(new Error("Origin is not allowed by CORS policy."));
-      },
-      credentials: false,
-    }),
+    // Listed origins get Access-Control-Allow-Origin; any other origin just doesn't, so the browser blocks it.
+    // Never reject on Origin server-side: proxied same-site requests (the web admin's /api rewrite) carry the
+    // browser's Origin too, and auth is a bearer token, not a cookie, so there is nothing to protect by refusing.
+    cors({ origin: config.corsOrigins, credentials: false }),
   );
 }
 app.use(express.json({ limit: "2mb" }));
