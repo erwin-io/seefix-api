@@ -5,7 +5,8 @@ import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { agentClient, bestEffort } from "../agent-client.js";
 import { notifyRole } from "../services/notifications.js";
 import { ensureWorkOrderForOutcome } from "../services/work-order-service.js";
-import { memoryUpload } from "../uploads.js";
+import { claimUploads, lockUnusedUploads } from "../direct-uploads.js";
+import { documentUpload } from "../uploads.js";
 import { uploadBuffer, destroyAsset } from "../cloudinary.js";
 import { config } from "../config.js";
 
@@ -339,18 +340,27 @@ router.post(
 router.post(
   "/handoffs/:id/documents",
   requireRoles("PROCUREMENT", "ADMIN"),
-  memoryUpload.single("file"),
+  documentUpload.single("file"),
   async (req, res, next) => {
-    let uploaded = null;
+    let uploaded = null; // only a legacy upload made by this request; deleted on failure
 
     try {
-      if (!req.file) {
+      // New clients upload straight to Cloudinary (POST /api/uploads/sign, purpose "procurement-document") and send
+      // JSON { publicId, resourceType, fileName?, mimeType? }; older clients still send multipart `file`.
+      const publicId = req.body?.publicId;
+      if (publicId && req.file) {
+        throw new ApiError(400, "Send either file or publicId, not both.", "VALIDATION_ERROR");
+      }
+      if (!publicId && !req.file) {
         throw new ApiError(
           400,
           "A document file is required.",
           "DOCUMENT_REQUIRED",
         );
       }
+      // Display-only metadata; truncated to the column sizes.
+      const fileName = String(req.file?.originalname ?? req.body?.fileName ?? "").trim().slice(0, 255) || null;
+      const mimeType = String(req.file?.mimetype ?? req.body?.mimeType ?? "").trim().slice(0, 150) || null;
 
       const type = String(
         req.body?.documentType || "OTHER",
@@ -408,19 +418,26 @@ router.post(
         }
       }
 
-      uploaded = await uploadBuffer(
-        req.file.buffer,
-        {
-          folder:
-            config.cloudinaryDocumentFolder,
+      let doc;
+      if (publicId) {
+        [doc] = await claimUploads(
+          req.user,
+          "procurement-document",
+          [{ publicId, resourceType: req.body?.resourceType }],
+        );
+      } else {
+        uploaded = await uploadBuffer(req.file.buffer, {
+          folder: config.cloudinaryDocumentFolder,
           resourceType: "auto",
-        },
-      );
+        });
+        doc = uploaded;
+      }
 
       const result = await withTransaction(
         req.user.id,
-        (client) =>
-          client.query(
+        async (client) => {
+          if (publicId) await lockUnusedUploads(client, [doc.public_id]);
+          return client.query(
             `INSERT INTO "dbo"."ProcurementDocuments"
                ("ProcurementHandoffId","ClarificationId",
                 "DocumentType","StorageProvider",
@@ -433,16 +450,15 @@ router.post(
               req.params.id,
               clarificationId,
               type,
-              uploaded.public_id,
-              uploaded.secure_url,
-              req.file.originalname || null,
-              req.file.mimetype || null,
-              req.file.size ||
-                uploaded.bytes ||
-                null,
+              doc.public_id,
+              doc.secure_url,
+              fileName,
+              mimeType,
+              req.file?.size || doc.bytes || null,
               req.user.id,
             ],
-          ),
+          );
+        },
       );
 
       res.status(201).json({

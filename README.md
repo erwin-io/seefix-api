@@ -85,9 +85,10 @@ No static UI is served. For the whole system (database, Agent host, worker, real
 
 ## Report upload
 
-`POST /api/reports` uses Bearer JWT and `multipart/form-data`.
+`POST /api/reports` uses Bearer JWT and JSON; images are uploaded straight to Cloudinary first (see `POST /api/uploads/sign`).
+Older clients may still send `multipart/form-data` with `images` instead of `imagePublicIds` (see docs/API_ENDPOINTS.md).
 
-- `images` — one or more JPEG/PNG/WebP files, required.
+- `imagePublicIds` — array of 1–5 Cloudinary public IDs from `purpose: "report-image"` uploads (JPEG/PNG/WebP, ≤ 10 MB each), required.
 - `locationId` — optional configured `FacilityLocations.Id`.
 - `building`, `floor`, `roomOrArea` — optional fallback/snapshot location text when no configured location is selected.
 - `description`, `notes`, `gpsLat`, `gpsLng` — optional.

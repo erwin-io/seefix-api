@@ -5,6 +5,7 @@ import {
   destroyAsset,
   reportImageRecord,
 } from "../cloudinary.js";
+import { claimUploads, lockUnusedUploads } from "../direct-uploads.js";
 import { ApiError } from "../errors.js";
 import { createNotification } from "./notifications.js";
 import { presentReport } from "./report-presentation.js";
@@ -51,20 +52,28 @@ async function resolveLocation(client, fields) {
   };
 }
 
-export async function createReport(user, fields, files) {
+export async function createReport(user, fields, { files = [], imagePublicIds } = {}) {
   // Quick check before Cloudinary uploads. The transactional recheck and
   // database unique index remain authoritative for concurrent requests.
   await assertNoActiveReport(query, user.id);
-  const uploaded = [];
+  // Only files this request uploaded are deleted on failure. Direct uploads stay so the client can retry;
+  // unused ones are removed by seefix-worker's cleanup.
+  const ownUploads = [];
 
   try {
-    for (const file of files) {
-      uploaded.push(
-        await uploadBuffer(file.buffer, {
-          folder: config.cloudinaryReportFolder,
-          resourceType: "image",
-        }),
-      );
+    let uploaded;
+    if (imagePublicIds != null) {
+      uploaded = await claimUploads(user, "report-image", imagePublicIds);
+    } else {
+      for (const file of files) {
+        ownUploads.push(
+          await uploadBuffer(file.buffer, {
+            folder: config.cloudinaryReportFolder,
+            resourceType: "image",
+          }),
+        );
+      }
+      uploaded = ownUploads;
     }
 
     const report = await withTransaction(user.id, async (client) => {
@@ -76,6 +85,7 @@ export async function createReport(user, fields, files) {
         [`seefix:active-report:${user.id}`],
       );
       await assertNoActiveReport(client.query.bind(client), user.id);
+      if (imagePublicIds != null) await lockUnusedUploads(client, uploaded.map((u) => u.public_id));
       const location = await resolveLocation(client, fields);
 
       const inserted = await client.query(
@@ -150,7 +160,7 @@ export async function createReport(user, fields, files) {
       imageCount: uploaded.length,
     };
   } catch (error) {
-    for (const item of uploaded) {
+    for (const item of ownUploads) {
       await destroyAsset(item.public_id, item.resource_type || "image");
     }
 

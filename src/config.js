@@ -131,12 +131,6 @@ export const config = Object.freeze({
     process.env.CLOUDINARY_DOCUMENT_FOLDER ||
     "seefix/procurement",
 
-  maxUploadMb: intEnv(
-    "MAX_UPLOAD_MB",
-    10,
-    1,
-  ),
-
   maxReportImages: intEnv(
     "MAX_REPORT_IMAGES",
     5,

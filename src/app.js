@@ -13,6 +13,7 @@ import workOrderRoutes from "./routes/work-orders.js";
 import adminRoutes from "./routes/admin.js";
 import adminKnowledgeRoutes from "./routes/admin-knowledge.js";
 import realtimeRoutes from "./routes/realtime.js";
+import uploadRoutes from "./routes/uploads.js";
 import { notFound, errorHandler } from "./middleware/errors.js";
 
 export const app = express();
@@ -68,5 +69,6 @@ app.use("/api/work-orders", workOrderRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin/knowledge", adminKnowledgeRoutes);
 app.use("/api/realtime", realtimeRoutes);
+app.use("/api/uploads", uploadRoutes);
 app.use(notFound);
 app.use(errorHandler);

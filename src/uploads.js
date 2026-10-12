@@ -1,11 +1,18 @@
+// Legacy multipart uploads through the API, kept for clients released before direct uploads (issue #12).
+// shortcut: remove once every installed client sends public IDs; Vercel still caps these requests at 4.5 MB total.
 import multer from "multer";
 import { config } from "./config.js";
+import { MAX_DOCUMENT_BYTES, MAX_IMAGE_BYTES } from "./direct-uploads.js";
 import { ApiError } from "./errors.js";
 
 const imageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-export const memoryUpload = multer({
+export const imageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: config.maxUploadMb * 1024 * 1024, files: config.maxReportImages },
+  limits: { fileSize: MAX_IMAGE_BYTES, files: config.maxReportImages },
+});
+export const documentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DOCUMENT_BYTES, files: 1 },
 });
 
 export function requireImageFiles(files, { min = 1 } = {}) {

@@ -3,7 +3,8 @@ import { config } from "../config.js";
 import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
-import { memoryUpload, requireImageFiles } from "../uploads.js";
+import { imageUpload, requireImageFiles } from "../uploads.js";
+import { claimUploads, lockUnusedUploads } from "../direct-uploads.js";
 import {
   uploadBuffer,
   destroyAsset,
@@ -546,7 +547,7 @@ router.post("/:id/materials", WORK_ROLES, async (req, res, next) => {
 router.post(
   "/:id/completion",
   WORK_ROLES,
-  memoryUpload.array("images"),
+  imageUpload.array("images"),
   async (req, res, next) => {
     const uploaded = [];
     try {
@@ -557,11 +558,18 @@ router.post(
           "Completion can only be submitted from IN_PROGRESS.",
           "INVALID_WORK_ORDER_STATE",
         );
-      const files = requireImageFiles(req.files, { min: 1 });
+      // Direct uploads send JSON imagePublicIds; older clients send multipart `images`.
+      const imagePublicIds = req.body?.imagePublicIds;
+      if (imagePublicIds != null && req.files?.length)
+        throw new ApiError(400, "Send either images or imagePublicIds, not both.", "VALIDATION_ERROR");
+      const files = imagePublicIds == null ? requireImageFiles(req.files, { min: 1 }) : [];
       const repairNotes = String(req.body?.repairNotes || "").trim();
       if (!repairNotes)
         throw new ApiError(400, "repairNotes is required.", "VALIDATION_ERROR");
       const actualMaterials = parseActualMaterials(req.body?.actualMaterials);
+      const images = imagePublicIds != null
+        ? await claimUploads(req.user, "completion-image", imagePublicIds)
+        : uploaded; // `uploaded` holds only this request's own uploads (deleted on failure)
       for (const file of files)
         uploaded.push(
           await uploadBuffer(file.buffer, {
@@ -570,7 +578,8 @@ router.post(
           }),
         );
       const row = await withTransaction(req.user.id, async (c) => {
-        for (const result of uploaded) {
+        if (imagePublicIds != null) await lockUnusedUploads(c, images.map((i) => i.public_id));
+        for (const result of images) {
           const img = reportImageRecord(result, false);
           await c.query(
             `INSERT INTO "dbo"."WorkOrderImages" ("WorkOrderId","ImageType","CloudinaryAssetId","PublicId","SecureUrl","Version","Format","Width","Height","Bytes","ResourceType","CreatedBy") VALUES ($1,'COMPLETION',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,

@@ -163,7 +163,7 @@ Shared settings (see `.env.example`): `DATABASE_URL`, `DATABASE_SSLMODE=verify-f
 
 **Vercel** 🔑 account. Import the repo (framework preset **Other**) and set every variable above in Project → Settings
 → Environment Variables. After that, `main` deploys to production and other branches get previews.
-`docs/VERCEL_DEPLOY.md` covers the details and limits (4.5 MB request bodies, 60 s per request).
+`docs/VERCEL_DEPLOY.md` covers the details and limits (4.5 MB request bodies, 60 s per request; files go straight to Cloudinary, so the body limit doesn't affect uploads).
 
 ## 7. Clients
 - **Web admin:** set `apiBaseUrl` in `src/environments/environment.ts` (empty = same origin behind a proxy), and add
