@@ -55,8 +55,8 @@ The other variables in `.env.example` are optional and have defaults.
 - Self-hosted alternative: `npm run outbox:dispatch` on an always-on machine (see `docs/REALTIME_ROLLOUT.md`).
 
 ## Known limits on Vercel
-- **Request body limit: 4.5 MB.** Photo and document uploads larger than that fail with `413 FUNCTION_PAYLOAD_TOO_LARGE`,
-  even though `MAX_UPLOAD_MB` allows 10 MB per file and several files per request. Workaround until direct-to-Cloudinary
-  uploads exist: keep each request under 4.5 MB (smaller or compressed photos, one at a time).
+- **Request body limit: 4.5 MB.** Current clients upload files straight to Cloudinary (`POST /api/uploads/sign`) and send
+  only public IDs, so this doesn't affect them (images up to 10 MB, documents up to 15 MB). Older clients that still send
+  multipart through the API fail with `413 FUNCTION_PAYLOAD_TOO_LARGE` above 4.5 MB per request.
 - **Request time: 60 s** (`maxDuration`). Agent processing is asynchronous (the API gets `202 Accepted`), so this only
   affects slow uploads or slow database round trips.
