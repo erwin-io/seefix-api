@@ -20,8 +20,9 @@ Mobile app (Android, HTTPS) ──────┼─► seefix-api (Vercel) ─�
 
 - **Assessments are queued.** The API saves reports and completions as `PENDING`; the Agent claims them from the
   database. A report is accepted while the Agent is down.
-- **Files never pass through the API.** Clients get a signed Cloudinary upload, send the file to Cloudinary and submit
-  only public IDs. Images up to 10 MB, documents up to 15 MB. Legacy multipart stays for older app versions.
+- **Current mobile/web clients upload files directly to Cloudinary, then submit public IDs** (signed by
+  `POST /api/uploads/sign`; images up to 10 MB, documents up to 15 MB). Legacy multipart clients still send file bytes
+  through the API and are subject to Vercel's 4.5 MB aggregate request limit.
 - **Realtime is durable.** Changes write `OutboxEvents`; seefix-worker delivers them to Pusher.
 
 ## Merged changes
@@ -88,7 +89,8 @@ dev proxy and native URL removed).
   CORS allows exactly the listed origins.
 - Production internal-repair flow, end to end with real before and after photos: report with a direct photo upload →
   Agent assessment → Maintenance Review (INTERNAL) → work order WO-2026-000007 → completion photo → completion check
-  `COMPLETED` (`VISIBLE_IMPROVEMENT`, on attempt 2 after the certificate fix) → supervisor decision.
+  `COMPLETED` (`VISIBLE_IMPROVEMENT`, on attempt 2 after the certificate fix) → supervisor decision controls available;
+  final approval/rework action not yet evidenced. The Agent result is advisory and does not resolve the work order.
 
 ## Known limitations
 
