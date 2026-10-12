@@ -58,5 +58,6 @@ The other variables in `.env.example` are optional and have defaults.
 - **Request body limit: 4.5 MB.** Current clients upload files straight to Cloudinary (`POST /api/uploads/sign`) and send
   only public IDs, so this doesn't affect them (images up to 10 MB, documents up to 15 MB). Older clients that still send
   multipart through the API fail with `413 FUNCTION_PAYLOAD_TOO_LARGE` above 4.5 MB per request.
-- **Request time: 60 s** (`maxDuration`). Agent processing is asynchronous (the API gets `202 Accepted`), so this only
-  affects slow uploads or slow database round trips.
+- **Request time: 60 s** (`maxDuration`). Report and completion assessments are queued in PostgreSQL and picked up by
+  the Agent, so they never hold a request open. The limit applies to direct Agent calls (drafts, previews: keep
+  `AGENT_TIMEOUT_MS` under 60000) and slow database round trips.
