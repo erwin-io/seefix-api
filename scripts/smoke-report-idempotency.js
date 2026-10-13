@@ -127,7 +127,12 @@ async function main() {
   // 2. concurrent duplicates
   const concurrentId = randomUUID();
   const concurrentUpload = await upload();
-  const results = await Promise.all([1, 2, 3].map(() => postReport(body(concurrentUpload, concurrentId))));
+  // allSettled: wait for every request (a late success must still be cleaned up), and count failures.
+  const settled = await Promise.allSettled([1, 2, 3].map(() => postReport(body(concurrentUpload, concurrentId))));
+  settled
+    .filter((outcome) => outcome.status === "rejected")
+    .forEach((outcome) => check("concurrent request completed", false, outcome.reason?.message ?? String(outcome.reason)));
+  const results = settled.filter((outcome) => outcome.status === "fulfilled").map((outcome) => outcome.value);
   const statuses = results.map((r) => r.status).sort();
   const ids = new Set(results.map((r) => r.json.id));
   check("3 concurrent identical requests → one report", ids.size === 1 && statuses.join() === "200,200,201", statuses.join());
