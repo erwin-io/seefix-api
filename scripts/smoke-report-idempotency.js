@@ -5,8 +5,11 @@
  *   SMOKE_API=https://seefix-api.vercel.app SMOKE_EMAIL=<test reporter> SMOKE_PASSWORD=<…> \
  *   SMOKE_IMAGE=C:\path\to\photo.jpg node scripts/smoke-report-idempotency.js
  *
- * Use a REPORTER test account with NO active report. Every report it creates is titled "SMOKE TEST" and is
- * cancelled at the end of its step (cancellation is allowed until Maintenance reviews it).
+ * Use a dedicated REPORTER test account with NO active report, and run it promptly after deploying (cancelling is
+ * only allowed until Maintenance reviews a report). Every report it creates is titled "SMOKE TEST", remembered,
+ * and cancelled: inline after each step and again in `finally` if a step failed half-way. A failed cancellation
+ * fails the run, and a last check confirms the account has no active report left. "Cleaned up" means no active test
+ * report remains; the cancelled reports, their images and notifications stay as history.
  * Checks: 201 create → 200 replay (same report, one notification) → 409 CLIENT_REPORT_ID_CONFLICT;
  * 3 concurrent identical requests → one report, one notification; legacy request without clientReportId → 201.
  */
@@ -67,9 +70,31 @@ async function submittedNotifications(reportId) {
   return (json.items || []).filter((n) => n.type === "REPORT_SUBMITTED" && n.entityId === reportId).length;
 }
 
+/** Every report this run created and has not cancelled yet; cancelled in `finally` whatever happens. */
+const toCancel = new Set();
+
+/** POST /api/reports, remembering any report it created (or replayed) for cleanup. */
+async function postReport(payload) {
+  const response = await api("POST", "/api/reports", payload);
+  if ((response.status === 200 || response.status === 201) && response.json.id) toCancel.add(response.json.id);
+  return response;
+}
+
 async function cancel(reportId) {
   const { status } = await api("POST", `/api/reports/${reportId}/cancel`, { reason: "Smoke test cleanup" });
-  check(`cleanup: report cancelled`, status === 200, `HTTP ${status}`);
+  check(`cleanup: ${reportId} cancelled`, status === 200, `HTTP ${status}`);
+  if (status === 200) toCancel.delete(reportId);
+}
+
+async function cleanUp() {
+  if (!token) return;
+  for (const reportId of [...toCancel]) await cancel(reportId).catch((error) => check(`cleanup: ${reportId}`, false, error.message));
+  const active = await api("GET", "/api/reports/my/active").catch(() => null);
+  check(
+    "cleanup: no active test report remains",
+    active?.status === 200 && active.json.canSubmit === true,
+    active?.json?.activeReport?.reportNo ? `${active.json.activeReport.reportNo} is still active` : `HTTP ${active?.status ?? "none"}`,
+  );
 }
 
 async function main() {
@@ -82,15 +107,15 @@ async function main() {
   // 1. create → replay → conflict
   const id = randomUUID();
   const publicId = await upload();
-  const created = await api("POST", "/api/reports", body(publicId, id));
+  const created = await postReport(body(publicId, id));
   check("new clientReportId → 201", created.status === 201 && created.json.replayed === false, `HTTP ${created.status}`);
-  const replay = await api("POST", "/api/reports", body(publicId, id));
+  const replay = await postReport(body(publicId, id));
   check(
     "same ID + content → 200 replay of the same report",
     replay.status === 200 && replay.json.replayed === true && replay.json.id === created.json.id,
     `HTTP ${replay.status}`,
   );
-  const conflict = await api("POST", "/api/reports", body(publicId, id, "SMOKE TEST — different content"));
+  const conflict = await postReport(body(publicId, id, "SMOKE TEST — different content"));
   check(
     "same ID + different content → 409 CLIENT_REPORT_ID_CONFLICT",
     conflict.status === 409 && conflict.json.error?.code === "CLIENT_REPORT_ID_CONFLICT",
@@ -102,7 +127,7 @@ async function main() {
   // 2. concurrent duplicates
   const concurrentId = randomUUID();
   const concurrentUpload = await upload();
-  const results = await Promise.all([1, 2, 3].map(() => api("POST", "/api/reports", body(concurrentUpload, concurrentId))));
+  const results = await Promise.all([1, 2, 3].map(() => postReport(body(concurrentUpload, concurrentId))));
   const statuses = results.map((r) => r.status).sort();
   const ids = new Set(results.map((r) => r.json.id));
   check("3 concurrent identical requests → one report", ids.size === 1 && statuses.join() === "200,200,201", statuses.join());
@@ -113,7 +138,7 @@ async function main() {
   }
 
   // 3. legacy client (no clientReportId)
-  const legacy = await api("POST", "/api/reports", body(await upload(), null));
+  const legacy = await postReport(body(await upload(), null));
   check("legacy request without clientReportId → 201", legacy.status === 201, `HTTP ${legacy.status}`);
   if (legacy.json.id) await cancel(legacy.json.id);
 }
@@ -123,6 +148,8 @@ try {
 } catch (error) {
   console.error(`ABORTED: ${error.message}`);
   failures += 1;
+} finally {
+  await cleanUp();
 }
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll smoke checks passed.");
 process.exitCode = failures ? 1 : 0;
