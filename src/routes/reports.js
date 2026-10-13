@@ -10,6 +10,7 @@ import {
 import { presentReport, presentAgentStatus } from "../services/report-presentation.js";
 import { cancelReport } from "../services/report-cancellation.js";
 import { findActiveReport } from "../services/report-active-policy.js";
+import { optionalUuid } from "../utils/materials.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -71,10 +72,16 @@ router.post(
           gpsLat,
           gpsLng,
         },
-        { files, imagePublicIds },
+        {
+          files,
+          imagePublicIds,
+          clientReportId: optionalUuid(req.body.clientReportId, "clientReportId"),
+          imageDigests: req.body.imageDigests,
+        },
       );
 
-      res.status(201).json(report);
+      // 200 when a retry of the same clientReportId returns the report it already created.
+      res.status(report.replayed ? 200 : 201).json(report);
     } catch (error) {
       next(error);
     }

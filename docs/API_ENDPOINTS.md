@@ -25,6 +25,11 @@ Uploads never attached to a record are removed later by seefix-worker's `upload-
 
 ## Reporter / reports
 - `POST /api/reports` — JSON with `imagePublicIds` (1–5 `report-image` uploads), or legacy multipart `images`.
+  Optional idempotency for the offline app: `clientReportId` (UUID) plus, with `imagePublicIds`, `imageDigests`
+  (SHA-256 hex of each photo's bytes, same order). A retry with the same ID and content returns the existing report
+  with `200` and `replayed: true` (no new upload claim or notification); a new report is `201`, `replayed: false`.
+  The same ID with different content is `409 CLIENT_REPORT_ID_CONFLICT`. Needs
+  `db/migrations/2026-10-14-report-client-id.sql`.
 - `GET /api/reports/my` — current user's reports.
 - `GET /api/reports/:id` — report detail.
 - `GET /api/reports/:id/agent-status` — Agent progress, read from the database (the Agent writes it there; the API never calls the Agent for it).

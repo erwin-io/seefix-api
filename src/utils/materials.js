@@ -25,7 +25,7 @@ function optionalQuantity(value, field = "quantity") {
   return quantity;
 }
 
-function optionalUuid(value, field) {
+export function optionalUuid(value, field) {
   if (value == null || value === "") return null;
   const text = String(value).trim();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text))
