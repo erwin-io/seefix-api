@@ -123,6 +123,10 @@ const CRITICAL_COLUMNS = {
     "FinalCategory",
     "FinalUrgency",
     "PriorityScore",
+
+    // db/migrations/2026-10-14-report-client-id.sql
+    "ClientReportId",
+    "ClientRequestHash",
   ],
 
   MaintenanceRequests: [

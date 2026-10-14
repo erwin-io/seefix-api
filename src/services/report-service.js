@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { config } from "../config.js";
 import { withTransaction, query } from "../database.js";
 import {
@@ -52,7 +53,102 @@ async function resolveLocation(client, fields) {
   };
 }
 
-export async function createReport(user, fields, { files = [], imagePublicIds } = {}) {
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+// Errors a concurrent request with the same clientReportId causes once it has committed first.
+const RACE_CODES = new Set(["ACTIVE_REPORT_EXISTS", "UPLOAD_ALREADY_USED"]);
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Fingerprint of an offline submission, so a reused clientReportId with different content is refused.
+ * Uses per-photo content digests, not Cloudinary public IDs: a legitimate retry may re-upload a photo.
+ */
+export function clientRequestHash(fields, imageDigests) {
+  const text = (value) => (value == null ? null : String(value).trim() || null);
+  return sha256(
+    JSON.stringify([
+      text(fields.description),
+      text(fields.notes),
+      text(fields.locationId),
+      text(fields.building),
+      text(fields.floor),
+      text(fields.roomOrArea),
+      fields.gpsLat ?? null,
+      fields.gpsLng ?? null,
+      imageDigests,
+    ]),
+  );
+}
+
+function validImageDigests(value, imageCount) {
+  const digests = Array.isArray(value) ? value.map((d) => String(d).toLowerCase()) : null;
+  if (!digests || digests.length !== imageCount || !digests.every((d) => SHA256_HEX.test(d))) {
+    throw new ApiError(
+      400,
+      "imageDigests must list one SHA-256 hex digest per image, in the same order.",
+      "VALIDATION_ERROR",
+    );
+  }
+  return digests;
+}
+
+/** The report an earlier attempt with this clientReportId created, or null. 409 if the content differs. */
+export async function findClientReport(q, userId, clientReportId, requestHash) {
+  const result = await q(
+    `SELECT r."Id" AS id, r."ReportNo" AS "reportNo", r."Status" AS status,
+            r."AgentStatus" AS "agentStatus", r."CreatedAt" AS "createdAt",
+            r."ClientRequestHash" AS "clientRequestHash",
+            (SELECT COUNT(*)::int FROM "dbo"."ReportImages" i WHERE i."ReportId"=r."Id") AS "imageCount"
+       FROM "dbo"."Reports" r
+      WHERE r."ReporterId"=$1 AND r."ClientReportId"=$2`,
+    [userId, clientReportId],
+  );
+  const existing = result.rows[0];
+  if (!existing) return null;
+  if (existing.clientRequestHash !== requestHash) {
+    throw new ApiError(
+      409,
+      "This clientReportId was already used for a different report.",
+      "CLIENT_REPORT_ID_CONFLICT",
+      { report: { id: existing.id, reportNo: existing.reportNo } },
+    );
+  }
+  const { clientRequestHash: _hash, ...report } = existing;
+  return { ...report, replayed: true };
+}
+
+/**
+ * Creates a Reporter's report. With `clientReportId` (offline app) the call is idempotent: a retry returns the
+ * report the first attempt created (`replayed: true`) without claiming uploads or notifying again.
+ */
+export async function createReport(user, fields, { files = [], imagePublicIds, clientReportId = null, imageDigests } = {}) {
+  if (!clientReportId) return createNewReport(user, fields, { files, imagePublicIds });
+
+  const imageCount = imagePublicIds != null ? (Array.isArray(imagePublicIds) ? imagePublicIds.length : 0) : files.length;
+  // Multipart sends the bytes, so the server digests them itself.
+  const digests = imagePublicIds != null ? validImageDigests(imageDigests, imageCount) : files.map((f) => sha256(f.buffer));
+  const requestHash = clientRequestHash(fields, digests);
+
+  // Before the active-report check and the upload claim: a retry must never be refused by its own report.
+  const existing = await findClientReport(query, user.id, clientReportId, requestHash);
+  if (existing) return existing;
+  try {
+    return await createNewReport(user, fields, { files, imagePublicIds, clientReportId, requestHash });
+  } catch (error) {
+    // A concurrent attempt with the same ID may have committed after the lookup above. Ours then fails on its
+    // report, its uploads or the unique index; return that report instead. Anything else is a real conflict.
+    const raced = RACE_CODES.has(error?.code) || error?.code === "23505";
+    if (raced) {
+      const winner = await findClientReport(query, user.id, clientReportId, requestHash);
+      if (winner) return winner;
+    }
+    throw error;
+  }
+}
+
+async function createNewReport(user, fields, { files = [], imagePublicIds, clientReportId = null, requestHash = null }) {
   // Quick check before Cloudinary uploads. The transactional recheck and
   // database unique index remain authoritative for concurrent requests.
   await assertNoActiveReport(query, user.id);
@@ -88,11 +184,14 @@ export async function createReport(user, fields, { files = [], imagePublicIds } 
       if (imagePublicIds != null) await lockUnusedUploads(client, uploaded.map((u) => u.public_id));
       const location = await resolveLocation(client, fields);
 
+      // The client-ID columns are written only when sent, so legacy clients never depend on the migration.
+      const clientColumns = clientReportId ? ',"ClientReportId","ClientRequestHash"' : "";
+      const clientValues = clientReportId ? ",$10,$11" : "";
       const inserted = await client.query(
         `INSERT INTO "dbo"."Reports"
            ("ReporterId","Description","Notes","LocationId",
-            "Building","Floor","RoomOrArea","GpsLat","GpsLng")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            "Building","Floor","RoomOrArea","GpsLat","GpsLng"${clientColumns})
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9${clientValues})
          RETURNING
            "Id" AS id,
            "ReportNo" AS "reportNo",
@@ -109,6 +208,7 @@ export async function createReport(user, fields, { files = [], imagePublicIds } 
           location.roomOrArea,
           fields.gpsLat ?? null,
           fields.gpsLng ?? null,
+          ...(clientReportId ? [clientReportId, requestHash] : []),
         ],
       );
 
@@ -158,6 +258,7 @@ export async function createReport(user, fields, { files = [], imagePublicIds } 
     return {
       ...report,
       imageCount: uploaded.length,
+      replayed: false,
     };
   } catch (error) {
     for (const item of ownUploads) {
