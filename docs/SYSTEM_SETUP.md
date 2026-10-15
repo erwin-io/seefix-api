@@ -87,7 +87,7 @@ Disable the Ollama tray app at sign-in (Task Manager → Startup apps), so only 
 
 **seefix-agents**
 ```powershell
-git clone https://github.com/erwin-io/seefix-agents.git C:\Development\seefix-agents
+git clone https://github.com/seefixmanagement/seefix-agents.git C:\Development\seefix-agents
 cd C:\Development\seefix-agents
 py -3.12 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -137,7 +137,7 @@ sign-in is needed.
 
 ## 5. seefix-worker (any always-on host)
 ```powershell
-git clone https://github.com/erwin-io/seefix-worker.git C:\Development\seefix-worker
+git clone https://github.com/seefixmanagement/seefix-worker.git C:\Development\seefix-worker
 cd C:\Development\seefix-worker
 npm ci
 copy .env.example .env

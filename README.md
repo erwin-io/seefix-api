@@ -53,7 +53,7 @@ AI assesses, prioritizes, drafts, compares, warns, and monitors. Human-authorize
 
 ## Main API groups
 
-- `/api/auth` — registration, login, current user.
+- `/api/auth` — registration, email verification, login (email or username), password reset, account changes (profile, username, email, password).
 - `/api/reports` — report submission, Reporter list/detail, independent verification, Agent state.
 - `/api/reference` — active buildings and configured facility locations.
 - `/api/notifications` — persistent user notifications.
@@ -62,26 +62,89 @@ AI assesses, prioritizes, drafts, compares, warns, and monitors. Human-authorize
 - `/api/work-orders` — dispatch/assignment, execution status, people/materials, completion evidence and completion-Agent state.
 - `/api/admin` — user management.
 - `/api/admin/knowledge` — damage-category, skill and material reference configuration.
+- `/api/uploads` — signed direct-to-Cloudinary uploads (`POST /api/uploads/sign`).
+- `/api/realtime` — Pusher config, private-channel auth, and the protected outbox dispatch endpoint.
+- `GET /health` — API, database and Agent status.
 
-## Setup
+## Prerequisites
 
-1. Configure `.env`. Node and `seefix-agents` must use the same canonical PostgreSQL database and shared Agent secret.
-2. Install dependencies:
+| Tool | Version | Notes |
+|---|---|---|
+| Git | any | to clone the repo |
+| Node.js | 20 or newer (22 LTS recommended) | `node -v` |
+| PostgreSQL | 13+ (local) or a Neon project | holds the SEEFIX `dbo` schema; `psql`/`pg_restore` to load it |
+| SEEFIX database backup | `seefix-dbo-<date>.sql` | ask the project owner for the latest schema + setup data backup |
+| Cloudinary account | — | report, work order and procurement files |
+| SMTP account | — | verification and password-reset emails |
+| `seefix-agents` | running, optional for first start | AI assessment; reports are still accepted while it is down |
+| Pusher app | optional | live updates; without it clients poll |
 
-   `npm install`
+## Setup (step by step)
 
-3. Validate:
+1. **Clone and install**
+   ```powershell
+   git clone https://github.com/seefixmanagement/seefix-api.git
+   cd seefix-api
+   npm ci
+   ```
+2. **Create the database** (skip if you use an existing SEEFIX database). Local PostgreSQL example:
+   ```powershell
+   createdb -U postgres seefixdb
+   pg_restore --no-owner --no-privileges -U postgres -d seefixdb seefix-dbo-<date>.sql
+   ```
+   For Neon, restore with the **direct** (non-`-pooler`) host; see [docs/SYSTEM_SETUP.md](docs/SYSTEM_SETUP.md#1-database-).
+3. **Apply the migrations** in `db/migrations/` that the backup doesn't include yet, oldest first. Each is safe to run twice:
+   ```powershell
+   psql "<DATABASE_URL>" -f db/migrations/2026-10-14-report-client-id.sql
+   ```
+4. **Configure `.env`**
+   ```powershell
+   copy .env.example .env      # cp on Linux/macOS
+   ```
+   Then set at least:
 
-   `npm run check`
-   `npm test`
-   `npm run verify:db`
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | the database from step 2. The **same** database is used by `seefix-agents` and `seefix-worker` |
+   | `JWT_SECRET` | random, 32+ characters (generate below) |
+   | `OTP_PEPPER` | random, 32+ characters. **Required, not in `.env.example`: add it** |
+   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | your mail provider. **Not in `.env.example`: add them** |
+   | `LOCAL_AGENT_URL`, `LOCAL_AGENT_SECRET` | Agent address and key; the key must equal `SEEFIX_AGENT_API_KEY` in `seefix-agents` |
+   | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | your Cloudinary account |
+   | `CORS_ORIGINS` | browser origins that call the API directly, e.g. `http://localhost:4200` (mobile app in the browser) |
 
-4. Start:
+   Generate secrets with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`.
+   Never reuse the sample values from `.env.example`. The app refuses to start and lists anything missing.
+5. **Check the code and the database**
+   ```powershell
+   npm run check        # syntax
+   npm test             # unit tests
+   npm run verify:db    # read-only check of the database contract
+   ```
+6. **Create the test login accounts** (optional): add `SEEFIX_RBAC_PASSWORD=<8+ characters>` to `.env`, then
+   ```powershell
+   node scripts/seed-rbac-users.js
+   ```
+   It creates one account per role: `reporter@`, `maintenance.staff@`, `maintenance.supervisor@`, `procurement@`,
+   `worker@` and `admin.test@seefix.local`, all with that password.
+7. **Start**
+   ```powershell
+   npm run dev          # auto-restarts on file changes
+   npm start            # plain start (run_windows.bat does install + check + start)
+   ```
+   Open `http://127.0.0.1:3000/health`: expect `"status":"ok"`. `agent.reachable` is `false` until `seefix-agents` runs.
 
-   `npm start`
+No static UI is served. For the whole system (Agent host, worker, realtime, hosting) see [docs/SYSTEM_SETUP.md](docs/SYSTEM_SETUP.md);
+for Vercel see [docs/VERCEL_DEPLOY.md](docs/VERCEL_DEPLOY.md). Production: `https://seefix-api.vercel.app`
+(every push to `main` deploys).
 
-No static UI is served. For the whole system (database, Agent host, worker, realtime, hosting) see
-[docs/SYSTEM_SETUP.md](docs/SYSTEM_SETUP.md).
+### Other scripts
+
+| Command | Purpose |
+|---|---|
+| `npm run test:rbac` | role-permission acceptance run against a running API (`SEEFIX_RBAC_BASE_URL`, default `http://127.0.0.1:3000`; uses the seeded accounts) |
+| `npm run outbox:dispatch` | stand-alone OutboxEvents → Pusher dispatcher (see docs/REALTIME_ROLLOUT.md) |
+| `node scripts/smoke-report-idempotency.js` | live smoke test of offline report submission (`clientReportId`); set `SMOKE_API` and the variables listed at the top of the script |
 
 ## Report upload
 
