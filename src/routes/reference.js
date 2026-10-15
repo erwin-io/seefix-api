@@ -1,9 +1,10 @@
 import { Router } from "express";
 import { query } from "../database.js";
 import { requireAuth } from "../middleware/auth.js";
+import { cachedGet } from "../cache/response-cache.js";
 
 const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, cachedGet({ domains: ["reference"] }));
 
 router.get("/buildings", async (_req, res, next) => {
   try {

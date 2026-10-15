@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
+import { cachedGet } from "../cache/response-cache.js";
+import { pageParams, pageResult } from "../utils/pagination.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { agentClient } from "../agent-client.js";
 import { presentReport, reportScreening, displayPriority } from "../services/report-presentation.js";
@@ -88,8 +90,10 @@ async function getAutoRoutingSettings(client) {
 router.get(
   "/action-center",
   MAINTENANCE_ANY,
+  cachedGet({ domains: ["reports", "work_orders", "procurement", "reference"] }),
   async (req, res, next) => {
     try {
+      const paging = pageParams(req.query);
       const result = await query(
         `SELECT *
          FROM "dbo"."v_MaintenanceActionCenter"
@@ -97,11 +101,13 @@ router.get(
             OR $2 IN ('MAINTENANCE_SUPERVISOR','ADMIN')
          ORDER BY
            "PriorityScore" DESC NULLS LAST,
-           "ActionCreatedAt" ASC`,
-        [req.user.role, req.user.role],
+           "ActionCreatedAt" ASC,
+           "EntityId", "ActionType"
+         LIMIT $3 OFFSET $4`,
+        [req.user.role, req.user.role, paging?.limit ?? null, paging?.offset ?? 0],
       );
 
-      res.json({ items: result.rows });
+      res.json(paging ? pageResult(result.rows, paging) : { items: result.rows });
     } catch (error) {
       next(error);
     }
@@ -111,8 +117,10 @@ router.get(
 router.get(
   "/review-queue",
   MAINTENANCE_ANY,
+  cachedGet({ domains: ["reports", "reference"] }),
   async (req, res, next) => {
     try {
+      const paging = pageParams(req.query);
       // Optional filter: all (default), actionable, or screening.
       // Leave the canonical priority view and workflow untouched.
       const triage = String(req.query.triage || "all").trim().toLowerCase();
@@ -124,7 +132,8 @@ router.get(
          FROM "dbo"."v_MaintenanceReviewQueue"
          ORDER BY
            "LivePriorityScore" DESC NULLS LAST,
-           "CreatedAt" ASC`,
+           "CreatedAt" ASC,
+           "ReportId"`,
       );
 
       // Resolve screening information by report ID OR number, avoiding any
@@ -149,7 +158,10 @@ router.get(
       });
       const filtered = triage === "all" ? items : items.filter((item) =>
         triage === "actionable" ? item.screening.isActionable : !item.screening.isActionable);
-      res.json({ items: filtered });
+      // The triage filter runs here, so pages are cut after it (the pending-review queue is small).
+      res.json(paging
+        ? pageResult(filtered.slice(paging.offset, paging.offset + paging.limit), paging)
+        : { items: filtered });
     } catch (error) {
       next(error);
     }
@@ -159,8 +171,10 @@ router.get(
 router.get(
   "/reports",
   MAINTENANCE_ANY,
+  cachedGet({ domains: ["reports", "reference"] }),
   async (req, res, next) => {
     try {
+      const paging = pageParams(req.query);
       const status = req.query.status
         ? String(req.query.status)
         : null;
@@ -206,12 +220,15 @@ router.get(
            CASE WHEN r."ScopeDecision"='Facility Issue'
                      AND r."AgentStatus"='COMPLETED'
                 THEN p."LivePriorityScore" ELSE NULL END DESC NULLS LAST,
-           r."CreatedAt" ASC
-         LIMIT 200`,
-        [status, triage],
+           r."CreatedAt" ASC,
+           r."Id"
+         LIMIT $3 OFFSET $4`,
+        // Legacy (no paging) keeps its 200-row cap; paged callers fetch every page.
+        [status, triage, paging?.limit ?? 200, paging?.offset ?? 0],
       );
 
-      res.json({ items: result.rows.map((row) => presentReport(row)) });
+      const rows = result.rows.map((row) => presentReport(row));
+      res.json(paging ? pageResult(rows, paging) : { items: rows });
     } catch (error) {
       next(error);
     }
