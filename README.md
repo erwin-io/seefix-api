@@ -87,16 +87,16 @@ AI assesses, prioritizes, drafts, compares, warns, and monitors. Human-authorize
    cd seefix-api
    npm ci
    ```
-2. **Create the database** (skip if you use an existing SEEFIX database). Local PostgreSQL example:
+2. **Create the database and apply the migrations.** `npm run db:migrate` builds an empty database from
+   `db/migrations/0000_baseline_dbo.sql` plus every later migration (it does not read `.env`):
    ```powershell
    createdb -U postgres seefixdb
-   pg_restore --no-owner --no-privileges -U postgres -d seefixdb seefix-dbo-<date>.sql
+   $env:DATABASE_URL = "postgresql://postgres:<password>@127.0.0.1:5432/seefixdb"; npm run db:migrate
    ```
-   For Neon, restore with the **direct** (non-`-pooler`) host; see [docs/SYSTEM_SETUP.md](docs/SYSTEM_SETUP.md#1-database-).
-3. **Apply the migrations** in `db/migrations/` that the backup doesn't include yet, oldest first. Each is safe to run twice:
-   ```powershell
-   psql "<DATABASE_URL>" -f db/migrations/2026-10-14-report-client-id.sql
-   ```
+   To start from a backup with data instead, `pg_restore --no-owner --no-privileges -d seefixdb seefix-dbo-<date>.sql`
+   first; `db:migrate` then adopts it and applies only what the backup lacks. See [db/README.md](db/README.md).
+3. **Neon** (shared preview/demo DB) is migrated by GitHub Actions on every push to `main`; nobody runs SQL there by
+   hand. See [db/README.md](db/README.md#one-time-setup-owner).
 4. **Configure `.env`**
    ```powershell
    copy .env.example .env      # cp on Linux/macOS

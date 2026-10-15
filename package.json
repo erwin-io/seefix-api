@@ -14,7 +14,10 @@
     "verify:db": "node scripts/verify-database-contract.js",
     "test:hardening": "node --test tests/backend-hardening.test.js",
     "test:rbac": "node scripts/rbac-acceptance.js",
-    "outbox:dispatch": "node scripts/outbox-dispatch.js"
+    "outbox:dispatch": "node scripts/outbox-dispatch.js",
+    "db:migrate": "node scripts/database/migrate.js",
+    "db:new": "node scripts/database/new-migration.js",
+    "db:diff": "node scripts/database/schema-diff.js"
   },
   "dependencies": {
     "@vercel/functions": "^3.9.11",

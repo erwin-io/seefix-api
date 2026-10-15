@@ -1,0 +1,55 @@
+# Applies db/migrations/*.sql to the Neon preview/demo database on every push to main (see db/README.md).
+# One-time setup: repository secret NEON_DATABASE_URL = the Neon DIRECT (non -pooler) connection string.
+name: Deploy Neon database
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'db/migrations/**'
+      - 'scripts/database/**'
+      - '.github/workflows/deploy-neon-db.yml'
+  workflow_dispatch:
+    inputs:
+      reset:
+        description: 'DANGER: drop schema dbo and rebuild it from the baseline + migrations (all data is lost)'
+        type: boolean
+        default: false
+      confirm_database:
+        description: 'For a reset, type the Neon database name exactly (e.g. neondb)'
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: neon-db
+  cancel-in-progress: false
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      MIGRATE_ENVIRONMENT: Neon preview/demo
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Validate configuration
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret NEON_DATABASE_URL is not set (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+      - name: Run migrations
+        env:
+          RESET: ${{ github.event_name == 'workflow_dispatch' && inputs.reset }}
+          CONFIRM_DATABASE: ${{ inputs.confirm_database }}
+        run: |
+          if [ "$RESET" = "true" ]; then
+            node scripts/database/migrate.js --reset --confirm "$CONFIRM_DATABASE"
+          else
+            node scripts/database/migrate.js
+          fi
