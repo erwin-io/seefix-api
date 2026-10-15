@@ -14,6 +14,7 @@ export function errorHandler(error, _req, res, _next) {
       : new ApiError(400, mapped.message, "UPLOAD_ERROR");
   }
   const status = mapped instanceof ApiError ? mapped.status : 500;
+  if (status === 429 && mapped.retryAfter) res.set("Retry-After", String(mapped.retryAfter));
   if (status >= 500) console.error("[API ERROR]", mapped);
   res.status(status).json({
     error: {
