@@ -22,6 +22,13 @@ test("reference categories exposes only active code/name/defaultUrgency", () => 
   assert.match(block, /"Code" AS code,"Name" AS name,"DefaultUrgency" AS "defaultUrgency"/);
 });
 
+test("work order list returns createdAt (Web Admin date filter) next to plannedStartAt", () => {
+  const wo = source("src/routes/work-orders.js");
+  const list = wo.slice(wo.indexOf('router.get("/", WORK_ROLES'), wo.indexOf('router.get("/assignable-users"'));
+  assert.match(list, /wo\."CreatedAt" AS "createdAt"/);
+  assert.match(list, /wo\."PlannedStartAt" AS "plannedStartAt"/, "existing fields unchanged");
+});
+
 test("procurement handoff detail returns ReportId", () => {
   assert.match(source("src/routes/procurement.js"), /r\."Id" AS "ReportId"/);
 });
