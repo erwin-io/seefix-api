@@ -2,6 +2,8 @@ import { Router } from "express";
 import { config } from "../config.js";
 import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
+import { cachedGet } from "../cache/response-cache.js";
+import { pageParams, pageResult } from "../utils/pagination.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { imageUpload, requireImageFiles } from "../uploads.js";
 import { claimUploads, lockUnusedUploads } from "../direct-uploads.js";
@@ -49,22 +51,26 @@ async function assertWorkAccess(id, user) {
     );
   return wo;
 }
-router.get("/", WORK_ROLES, async (req, res, next) => {
+// WORKER results depend on who asks (responsible lead), so entries are per user.
+router.get("/", WORK_ROLES, cachedGet({ domains: ["work_orders", "reports"], scope: "user" }), async (req, res, next) => {
   try {
+    const paging = pageParams(req.query);
     const r = await query(
-      `SELECT wo."Id" AS id,wo."WorkOrderNo" AS "workOrderNo",wo."Status" AS status,wo."AssignedPartyName" AS "assignedPartyName",wo."ResponsibleLeadName" AS "responsibleLeadName",wo."PlannedStartAt" AS "plannedStartAt",wo."Deadline" AS deadline,wo."CompletionAgentStatus" AS "completionAgentStatus",r."ReportNo" AS "reportNo",mr."RequestNo" AS "requestNo" FROM "dbo"."WorkOrders" wo JOIN "dbo"."Reports" r ON r."Id"=wo."ReportId" JOIN "dbo"."MaintenanceRequests" mr ON mr."Id"=wo."MaintenanceRequestId" WHERE ($1::text IS NULL OR wo."Status"=$1) AND ($2::uuid IS NULL OR wo."ResponsibleLeadUserId"=$2) ORDER BY wo."CreatedAt" DESC LIMIT 200`,
+      `SELECT wo."Id" AS id,wo."WorkOrderNo" AS "workOrderNo",wo."Status" AS status,wo."AssignedPartyName" AS "assignedPartyName",wo."ResponsibleLeadName" AS "responsibleLeadName",wo."PlannedStartAt" AS "plannedStartAt",wo."Deadline" AS deadline,wo."CompletionAgentStatus" AS "completionAgentStatus",r."ReportNo" AS "reportNo",mr."RequestNo" AS "requestNo" FROM "dbo"."WorkOrders" wo JOIN "dbo"."Reports" r ON r."Id"=wo."ReportId" JOIN "dbo"."MaintenanceRequests" mr ON mr."Id"=wo."MaintenanceRequestId" WHERE ($1::text IS NULL OR wo."Status"=$1) AND ($2::uuid IS NULL OR wo."ResponsibleLeadUserId"=$2) ORDER BY wo."CreatedAt" DESC, wo."Id" DESC LIMIT $3 OFFSET $4`,
       [
         req.query.status || null,
         req.user.role === "WORKER" ? req.user.id : null,
+        paging?.limit ?? 200, // legacy (no paging) keeps its 200-row cap
+        paging?.offset ?? 0,
       ],
     );
-    res.json({ items: r.rows });
+    res.json(paging ? pageResult(r.rows, paging) : { items: r.rows });
   } catch (e) {
     next(e);
   }
 });
 // Registered before "/:id". Staff cannot use the ADMIN-only user list to pick a lead.
-router.get("/assignable-users", ASSIGN_ROLES, async (_req, res, next) => {
+router.get("/assignable-users", ASSIGN_ROLES, cachedGet({ domains: ["users"] }), async (_req, res, next) => {
   try {
     const r = await query(
       `SELECT "Id" AS id,"FullName" AS "fullName","Email" AS email,"Role" AS role,"JobTitle" AS "jobTitle","DepartmentOrTrade" AS "departmentOrTrade","Phone" AS phone FROM "dbo"."Users" WHERE "IsActive"=TRUE AND "Role" IN ('WORKER','MAINTENANCE_STAFF','MAINTENANCE_SUPERVISOR','ADMIN') ORDER BY ("Role"='WORKER') DESC,"FullName"`,

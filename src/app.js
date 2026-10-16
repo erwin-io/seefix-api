@@ -14,6 +14,7 @@ import adminRoutes from "./routes/admin.js";
 import adminKnowledgeRoutes from "./routes/admin-knowledge.js";
 import realtimeRoutes from "./routes/realtime.js";
 import uploadRoutes from "./routes/uploads.js";
+import syncRoutes from "./routes/sync.js";
 import { dispatchAfterWrite } from "./realtime/dispatch-now.js";
 import { notFound, errorHandler } from "./middleware/errors.js";
 
@@ -68,6 +69,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/admin/knowledge", adminKnowledgeRoutes);
 app.use("/api/realtime", realtimeRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/sync", syncRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

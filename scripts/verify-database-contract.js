@@ -515,6 +515,17 @@ async function main() {
       "and critical route/review columns."
     ),
   );
+
+  // Web Admin V2 (optional until db/migrations/2026-10-16-v2-cache-domain-versions.sql is applied).
+  const cache = await query(
+    `SELECT (SELECT COUNT(*) FROM "dbo"."CacheDomainVersions") AS domains,
+            (SELECT COUNT(*) FROM pg_trigger WHERE tgname LIKE 'CT\_%\_CacheVersion') AS triggers`,
+  ).catch((error) => (error?.code === "42P01" ? null : Promise.reject(error)));
+  console.log(
+    cache
+      ? `Cache domain versions: ${cache.rows[0].domains} domains, ${cache.rows[0].triggers} version triggers.`
+      : "Cache domain versions: not installed (API serves without the response cache).",
+  );
 }
 
 

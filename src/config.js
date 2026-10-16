@@ -177,6 +177,13 @@ export const config = Object.freeze({
   outboxPublishTimeoutMs: intEnv("OUTBOX_PUBLISH_TIMEOUT_MS", 5000, 500),
   // Rows older than this are never claimed (left PENDING, untouched): bounds backlog on first enable.
   outboxMaxAgeMinutes: intEnv("OUTBOX_MAX_AGE_MINUTES", 60, 1),
+
+  // Per-instance GET response cache (Web Admin V2, docs/V2_CACHE_SYNC.md). Entries are only served while their
+  // dbo."CacheDomainVersions" are unchanged; the TTL bounds time-based drift (live priority ages with time).
+  responseCacheEnabled: String(process.env.RESPONSE_CACHE || "on").trim().toLowerCase() !== "off",
+  responseCacheTtlMs: intEnv("RESPONSE_CACHE_TTL_MS", 60000, 1000),
+  responseCacheMaxEntries: intEnv("RESPONSE_CACHE_MAX_ENTRIES", 500, 1),
+  responseCacheMaxBytes: intEnv("RESPONSE_CACHE_MAX_BYTES", 50 * 1024 * 1024, 1024),
 });
 
 export function validateRuntimeConfig() {
