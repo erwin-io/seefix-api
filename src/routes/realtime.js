@@ -6,6 +6,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { canSubscribe, channel } from "../realtime/channels.js";
 import { dispatchNow, hasDispatchSecret } from "../realtime/dispatch-now.js";
 import { authorizeChannel, clientRealtimeEnabled, realtimeEnabled } from "../realtime/pusher-client.js";
+import { canSubscribeRole, roleChannel } from "../realtime/role-channels.js";
 
 const router = Router();
 
@@ -31,6 +32,8 @@ router.get("/config", (req, res) =>
     key: clientRealtimeEnabled ? config.pusherKey : null,
     cluster: clientRealtimeEnabled ? config.pusherCluster : null,
     userChannel: channel.user(req.user.id),
+    // Cache-change hints (data.changed) for the caller's role; null when the role gets none.
+    roleChannel: roleChannel(req.user.role),
   }),
 );
 
@@ -41,7 +44,7 @@ router.post("/auth", async (req, res, next) => {
     const socketId = String(req.body?.socket_id || "");
     const channelName = String(req.body?.channel_name || "");
     if (!/^\d+\.\d+$/.test(socketId)) throw new ApiError(400, "socket_id is invalid.", "VALIDATION_ERROR");
-    if (!(await canSubscribe(req.user, channelName, query))) {
+    if (!canSubscribeRole(req.user, channelName) && !(await canSubscribe(req.user, channelName, query))) {
       throw new ApiError(403, "You cannot subscribe to this channel.", "FORBIDDEN");
     }
     res.json(authorizeChannel(socketId, channelName));
