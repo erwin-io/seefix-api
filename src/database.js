@@ -64,5 +64,12 @@ export function mapDatabaseError(error) {
   if (error?.code === "23503") return new ApiError(409, "The operation references a missing or protected record.", "FOREIGN_KEY_CONFLICT");
   if (error?.code === "23514") return new ApiError(409, "The operation violates the SEEFIX workflow contract.", "CHECK_CONSTRAINT", error.constraint);
   if (error?.code === "22P02") return new ApiError(400, "One of the supplied identifiers or values is invalid.", "INVALID_VALUE");
+  // Undefined table/column: the code is deployed ahead of its migration (e.g. V2 search/buildings before
+  // 2026-10-16-v2-search-buildings.sql). Answer 503 instead of a generic 500, so clients show "not available yet".
+  if (error?.code === "42P01" || error?.code === "42703") {
+    const notReady = new ApiError(503, "This feature needs a database update that has not been applied yet.", "SCHEMA_NOT_READY");
+    notReady.cause = error;
+    return notReady;
+  }
   return error;
 }
