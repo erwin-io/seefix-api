@@ -107,8 +107,10 @@ domain through the existing triggers.
 The link is computed for display only and never written back to the report.
 
 **Display location (`location.source`)**, by the pure function `services/geo.js#effectiveLocation`:
+- `CORRECTED`: maintenance saved a map location for the report (§4.2). `location.correction` says who, when, why.
 - `GPS`: the report's GPS when the building has no perimeter, or when the GPS is inside it or within its tolerance.
-- `BUILDING_DEFAULT`: the building's pin when GPS is missing or outside the perimeter.
+- `BUILDING_DEFAULT`: the building's location when GPS is missing or outside the perimeter: its default pin, or the
+  centre of its perimeter when it has no pin (`location.defaultFrom`: `PIN` or `PERIMETER_CENTER`).
 - `NONE`: not pinned. The marker still appears in the table view.
 
 `rawGps` is always the report's untouched coordinates. `gpsCheck` explains the provenance: `INSIDE`,
@@ -116,6 +118,27 @@ The link is computed for display only and never written back to the report.
 
 **GPS accuracy:** the Reporter app doesn't send accuracy today (no new mobile features in V2), so tolerance is the
 only reliability control. Adding accuracy would be a separate, additive Reporter change.
+
+The response also carries `campus` (§4.1), the area every campus map stays inside.
+
+### 4.1 Campus map area: `GET/PUT /api/admin/campus-settings` (ADMIN)
+
+`{ "centerLat": 10.326321, "centerLng": 123.954995, "radiusMeters": 600, "minZoom": 16 }`. Maps open at the centre,
+can't be panned outside the circle (`radiusMeters`, 100–5000) and can't zoom out past `minZoom` (10–18). Stored in
+`dbo."SystemSettings"` key `campus.map` (no migration); until an admin saves it, these defaults apply (`isDefault`).
+A save is audited (`CAMPUS_MAP_SETTINGS_UPDATED`) and refreshes open maps (the `reference` cache domain).
+
+### 4.2 One report's map location: `GET /api/map/reports/:id`, `PUT|DELETE /api/map/reports/:id/location`
+
+- **GET** (map roles; same 404/403 rule as the report detail): `{ report, building, location, suggestion, campus,
+  canCorrect }`. Only this report; no other markers.
+- **PUT** (ADMIN, MAINTENANCE_SUPERVISOR, MAINTENANCE_STAFF) `{ lat, lng, source: "MANUAL"|"BUILDING", buildingId?,
+  reason? }`: saves where the map shows the report. The point must be inside the campus area (400 `OUTSIDE_CAMPUS`).
+  **DELETE** removes it (back to GPS / building location). Both are audited (`REPORT_MAP_LOCATION_SET|CLEARED`).
+- Stored in `dbo."ReportLocationCorrections"` (migration `2026-10-17-report-map-location.sql`), never in
+  `dbo."Reports"`: raw GPS and the building text stay as submitted.
+- `suggestion` ("Use … location"): the linked building's location, else the single building whose name or code loosely
+  matches the report's building text (`old bldg.` → Old Building). Deterministic; no AI. `null` when unsure.
 
 ## 5. Evidence (local PostgreSQL 16 copy, no production)
 

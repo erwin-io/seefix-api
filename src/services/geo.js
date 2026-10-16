@@ -58,20 +58,76 @@ export function validatePerimeter(perimeter) {
   return open;
 }
 
+/** Area centroid of a perimeter (vertex average if it is degenerate). Campus scale, so plain lat/lng is fine. */
+export function perimeterCenter(perimeter) {
+  if (!Array.isArray(perimeter) || perimeter.length < 3) return null;
+  // Relative to the first vertex: with raw degrees (e.g. 121.0°) the cross products lose precision.
+  const [oy, ox] = perimeter[0];
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0, j = perimeter.length - 1; i < perimeter.length; j = i++) {
+    const [yi, xi] = [perimeter[i][0] - oy, perimeter[i][1] - ox];
+    const [yj, xj] = [perimeter[j][0] - oy, perimeter[j][1] - ox];
+    const f = xj * yi - xi * yj;
+    a += f;
+    cx += (xj + xi) * f;
+    cy += (yj + yi) * f;
+  }
+  const round = (n) => Number(n.toFixed(6));
+  if (Math.abs(a) < 1e-14) {
+    const avg = (k) => perimeter.reduce((sum, p) => sum + p[k], 0) / perimeter.length;
+    return { lat: round(avg(0)), lng: round(avg(1)) };
+  }
+  return { lat: round(oy + cy / (3 * a)), lng: round(ox + cx / (3 * a)) };
+}
+
+/** Straight-line metres between two { lat, lng } points (campus scale). */
+export function distanceMeters(a, b) {
+  const [x, y] = toMetres([a.lat, a.lng], [b.lat, b.lng]);
+  return Math.hypot(x, y);
+}
+
+/** The building's default point: its pin, else the centre of its perimeter. */
+export function buildingPoint(building) {
+  if (!building) return null;
+  if (building.defaultLat !== null && building.defaultLat !== undefined) {
+    return { lat: Number(building.defaultLat), lng: Number(building.defaultLng), from: "PIN" };
+  }
+  const c = perimeterCenter(building.perimeter);
+  return c ? { ...c, from: "PERIMETER_CENTER" } : null;
+}
+
 /**
  * Display location for a report on the campus map. Raw GPS is always returned untouched as `rawGps`; only the
  * display pin is derived:
+ *  - CORRECTED when maintenance saved a map location for the report (dbo."ReportLocationCorrections");
  *  - GPS when the report has GPS and the building has no perimeter, or the GPS is inside / within tolerance of it;
- *  - BUILDING_DEFAULT when GPS is missing or falls outside the tagged building, and the building has a default pin;
+ *  - BUILDING_DEFAULT when GPS is missing or falls outside the tagged building: the building's default pin, or the
+ *    centre of its perimeter when it has no pin (`defaultFrom`);
  *  - NONE otherwise (listed in the table view, not pinned).
- * The report's building is never changed by this function.
+ * The report's building and GPS are never changed by this function.
  */
-export function effectiveLocation({ gpsLat, gpsLng }, building) {
+export function effectiveLocation({ gpsLat, gpsLng, correction = null }, building) {
+  const base = derivedLocation(gpsLat, gpsLng, building);
+  if (!correction) return base;
+  return {
+    ...base,
+    source: "CORRECTED",
+    lat: Number(correction.lat),
+    lng: Number(correction.lng),
+    correction: {
+      source: correction.source, reason: correction.reason ?? null,
+      updatedAt: correction.updatedAt ?? null, updatedBy: correction.updatedBy ?? null,
+    },
+  };
+}
+
+function derivedLocation(gpsLat, gpsLng, building) {
   const hasGps = gpsLat !== null && gpsLat !== undefined && gpsLng !== null && gpsLng !== undefined;
   const rawGps = hasGps ? { lat: Number(gpsLat), lng: Number(gpsLng) } : null;
-  const pin = building && building.defaultLat !== null && building.defaultLat !== undefined
-    ? { lat: Number(building.defaultLat), lng: Number(building.defaultLng) }
-    : null;
+  const point = buildingPoint(building);
+  const pin = point ? { lat: point.lat, lng: point.lng, defaultFrom: point.from } : null;
   if (hasGps) {
     if (!building?.perimeter) {
       return { source: "GPS", lat: rawGps.lat, lng: rawGps.lng, rawGps, gpsCheck: building ? "NO_PERIMETER" : "NO_BUILDING" };
