@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { query } from '../database.js';
 import { ApiError } from '../errors.js';
+import { userThrottle } from '../security/policies.js';
 
 export function signAccessToken(user, credentialsVersion = 0) {
   return jwt.sign(
@@ -39,7 +40,7 @@ export async function requireAuth(req, _res, next) {
       throw new ApiError(403, 'Please verify your email before continuing.', 'EMAIL_VERIFICATION_REQUIRED');
     }
     req.user = user;
-    next();
+    userThrottle(req, _res, next);
   } catch (error) { next(error); }
 }
 
