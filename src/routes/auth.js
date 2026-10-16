@@ -7,6 +7,7 @@ import { requireAuth, signAccessToken } from '../middleware/auth.js';
 import { requireEmail, optionalUsername, requirePassword, optionalText, requireOtp, publicUser } from '../services/account-validation.js';
 import { issueChallenge, consumeChallenge, deliverChallenge } from '../services/account-challenges.js';
 import { auditAccount } from '../services/account-audit.js';
+import { limits } from '../security/policies.js';
 
 const router = Router();
 const RESET_RESPONSE = { message: 'If the account exists, a password-reset code has been sent to its email address.' };
@@ -27,7 +28,7 @@ function invalidCodeResult(result) {
 }
 
 // Public Reporter registration: no access token until the email is verified.
-router.post('/register', async (req, res, next) => {
+router.post('/register', ...limits.register, async (req, res, next) => {
   try {
     const fullName = optionalText(req.body?.fullName, 200, 'Full name');
     if (!fullName || fullName.length < 2) throw new ApiError(400, 'Full name is required.', 'VALIDATION_ERROR');
@@ -57,7 +58,7 @@ router.post('/register', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/login', async (req, res, next) => {
+router.post('/login', ...limits.login, async (req, res, next) => {
   try {
     const identifier = String(req.body?.identifier ?? req.body?.email ?? req.body?.username ?? '').trim().toLowerCase();
     const password = req.body?.password;
@@ -81,7 +82,7 @@ router.post('/login', async (req, res, next) => {
 });
 
 // Verification is public so new Reporters can verify before their first login.
-router.post('/verify-email', async (req, res, next) => {
+router.post('/verify-email', ...limits.codeCheck, async (req, res, next) => {
   try {
     const email = requireEmail(req.body?.email);
     const code = requireOtp(req.body?.code);
@@ -103,7 +104,7 @@ router.post('/verify-email', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/resend-verification', async (req, res, next) => {
+router.post('/resend-verification', ...limits.codeRequest, async (req, res, next) => {
   try {
     const email = requireEmail(req.body?.email);
     const challenge = await withTransaction(null, async client => {
@@ -120,7 +121,7 @@ router.post('/resend-verification', async (req, res, next) => {
   }
 });
 
-router.post('/forgot-password', async (req, res, next) => {
+router.post('/forgot-password', ...limits.codeRequest, async (req, res, next) => {
   try {
     const email = requireEmail(req.body?.email);
     const challenge = await withTransaction(null, async client => {
@@ -139,7 +140,7 @@ router.post('/forgot-password', async (req, res, next) => {
   }
 });
 
-router.post('/reset-password', async (req, res, next) => {
+router.post('/reset-password', ...limits.codeCheck, async (req, res, next) => {
   try {
     const email = requireEmail(req.body?.email);
     const code = requireOtp(req.body?.code);
@@ -198,7 +199,7 @@ router.patch('/me', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.patch('/me/username', requireAuth, async (req, res, next) => {
+router.patch('/me/username', requireAuth, ...limits.passwordCheck, async (req, res, next) => {
   try {
     const username = optionalUsername(req.body?.username);
     if (!username) throw new ApiError(400, 'Username is required.', 'INVALID_USERNAME');
@@ -213,7 +214,7 @@ router.patch('/me/username', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/me/change-password', requireAuth, async (req, res, next) => {
+router.post('/me/change-password', requireAuth, ...limits.passwordCheck, async (req, res, next) => {
   try {
     const newPassword = requirePassword(req.body?.newPassword);
     const hash = await bcrypt.hash(newPassword, config.bcryptRounds);
@@ -231,7 +232,7 @@ router.post('/me/change-password', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/me/change-email', requireAuth, async (req, res, next) => {
+router.post('/me/change-email', requireAuth, ...limits.passwordCheck, async (req, res, next) => {
   try {
     const newEmail = requireEmail(req.body?.newEmail);
     const outcome = await withTransaction(req.user.id, async client => {
@@ -261,7 +262,7 @@ router.post('/me/change-email', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/me/change-email/confirm', requireAuth, async (req, res, next) => {
+router.post('/me/change-email/confirm', requireAuth, ...limits.codeCheck, async (req, res, next) => {
   try {
     if (req.user.role !== 'REPORTER') throw new ApiError(403, 'Email confirmation applies only to Reporters.', 'FORBIDDEN');
     const email = requireEmail(req.body?.newEmail);

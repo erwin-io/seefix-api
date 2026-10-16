@@ -3,6 +3,7 @@ import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
 import { cachedGet } from "../cache/response-cache.js";
 import { pageParams, pageResult } from "../utils/pagination.js";
+import { limits } from "../security/policies.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { agentClient } from "../agent-client.js";
 import { presentReport, reportScreening, displayPriority } from "../services/report-presentation.js";
@@ -306,6 +307,7 @@ router.get(
 router.post(
   "/reports/:id/maintenance-request/regenerate",
   MAINTENANCE_ANY,
+  ...limits.aiGenerate,
   async (req, res, next) => {
     try {
       const state = await query(
