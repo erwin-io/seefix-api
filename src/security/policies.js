@@ -47,6 +47,13 @@ export const limits = {
       message: "Too many AI requests. Please wait before regenerating again.",
     }),
   ],
+  // Assistant chat (seefix-api#21): one model call per question, queued behind report jobs on the AI host.
+  assistantAsk: [
+    sharedRateLimit({
+      name: "assistant-ask-user", windowSeconds: 60 * MIN, max: 120, key: (req) => req.user?.id,
+      message: "Too many assistant questions. Please wait a little.",
+    }),
+  ],
 };
 
 /**

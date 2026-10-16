@@ -31,7 +31,7 @@ const ASSIGN_ROLES = requireRoles(
   "MAINTENANCE_SUPERVISOR",
   "ADMIN",
 );
-async function assertWorkAccess(id, user) {
+export async function assertWorkAccess(id, user) {
   const q = await query(`SELECT * FROM "dbo"."WorkOrders" WHERE "Id"=$1`, [id]);
   const wo = q.rows[0];
   if (!wo)

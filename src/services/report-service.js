@@ -269,7 +269,11 @@ async function createNewReport(user, fields, { files = [], imagePublicIds, clien
   }
 }
 
-export async function getReportDetail(reportId, user) {
+/**
+ * The report row rule, shared by GET /api/reports/:id, the assistant tools and reminders (404, then 403).
+ * Returns the report row with ReporterName and live priority.
+ */
+export async function assertReportAccess(reportId, user) {
   const result = await query(
     `SELECT
        r.*,
@@ -337,6 +341,12 @@ export async function getReportDetail(reportId, user) {
       "FORBIDDEN",
     );
   }
+
+  return report;
+}
+
+export async function getReportDetail(reportId, user) {
+  const report = await assertReportAccess(reportId, user);
 
   const [
     images,

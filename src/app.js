@@ -18,6 +18,7 @@ import syncRoutes from "./routes/sync.js";
 import searchRoutes from "./routes/search.js";
 import analyticsRoutes from "./routes/analytics.js";
 import { adminBuildings, mapRoutes } from "./routes/buildings.js";
+import assistantRoutes from "./routes/assistant.js";
 import { dispatchAfterWrite } from "./realtime/dispatch-now.js";
 import { notFound, errorHandler } from "./middleware/errors.js";
 
@@ -77,6 +78,7 @@ app.use("/api/sync", syncRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/map", mapRoutes);
+app.use("/api/assistant", assistantRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
