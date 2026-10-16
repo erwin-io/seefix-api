@@ -27,15 +27,16 @@ function tooMany(retryAfterSeconds, message) {
 
 /** Atomic fixed-window counter in dbo."RateLimitBuckets": correct across every API instance. */
 export async function hitSharedBucket(key, windowSeconds, db = { query }) {
+  // clock_timestamp(), not now(): a request that waited on the row lock must not see a window "from the future".
   const r = await db.query(
-    `INSERT INTO "dbo"."RateLimitBuckets" ("Key","WindowStart","Count") VALUES ($1, now(), 1)
+    `INSERT INTO "dbo"."RateLimitBuckets" ("Key","WindowStart","Count") VALUES ($1, clock_timestamp(), 1)
      ON CONFLICT ("Key") DO UPDATE SET
-       "Count" = CASE WHEN "RateLimitBuckets"."WindowStart" <= now() - make_interval(secs => $2)
+       "Count" = CASE WHEN "RateLimitBuckets"."WindowStart" <= clock_timestamp() - make_interval(secs => $2)
                       THEN 1 ELSE "RateLimitBuckets"."Count" + 1 END,
-       "WindowStart" = CASE WHEN "RateLimitBuckets"."WindowStart" <= now() - make_interval(secs => $2)
-                      THEN now() ELSE "RateLimitBuckets"."WindowStart" END
+       "WindowStart" = CASE WHEN "RateLimitBuckets"."WindowStart" <= clock_timestamp() - make_interval(secs => $2)
+                      THEN clock_timestamp() ELSE "RateLimitBuckets"."WindowStart" END
      RETURNING "Count",
-       GREATEST(0, EXTRACT(EPOCH FROM ("WindowStart" + make_interval(secs => $2) - now())))::float AS "ResetIn"`,
+       GREATEST(0, EXTRACT(EPOCH FROM ("WindowStart" + make_interval(secs => $2) - clock_timestamp())))::float AS "ResetIn"`,
     [key, windowSeconds],
   );
   if (Math.random() < 0.01) {
