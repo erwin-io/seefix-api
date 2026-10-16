@@ -216,8 +216,10 @@ test("concurrent: the first request commits before the second reaches its upload
 
   // Request A runs through; request B's Cloudinary lookup (its upload claim) waits until A has committed.
   let releaseB;
+  const callsBefore = resourceCalls;
   const a = post(user, body);
-  await new Promise((resolve) => setTimeout(resolve, 5)); // A passes its lookup and pre-check first
+  // A passes its lookup first (a fixed sleep raced on slow CI runners: A then hit the gate too and nothing committed).
+  while (resourceCalls === callsBefore) await new Promise((resolve) => setImmediate(resolve));
   resourceGate = new Promise((resolve) => (releaseB = resolve));
   const committed = afterNextCommit();
   const b = post(user, body);
