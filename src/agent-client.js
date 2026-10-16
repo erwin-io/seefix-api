@@ -126,6 +126,14 @@ export const agentClient = {
       method: "POST",
     }),
 
+  // Fact-only phrasing (seefix-agents#8). The Agent bounds its own model call at 30 s.
+  assistantRespond: (body) =>
+    agentRequest("/api/assistant/respond", {
+      method: "POST",
+      body,
+      timeoutMs: 35000,
+    }),
+
   runMonitor: () =>
     agentRequest("/api/monitor/run", {
       method: "POST",

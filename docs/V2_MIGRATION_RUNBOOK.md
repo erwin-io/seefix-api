@@ -25,6 +25,7 @@ After merging #22 and #23, re-run #24's CI (update the branch from main) before 
 | 1 | `2026-10-16-v2-cache-domain-versions.sql` | nothing | `rollback/2026-10-16-v2-cache-domain-versions.down.sql` |
 | 2 | `2026-10-16-v2-rate-limits.sql` | nothing | `rollback/2026-10-16-v2-rate-limits.down.sql` |
 | 3 | `2026-10-16-v2-search-buildings.sql` | 1 applied (Buildings edits bump the `reference` domain); `CREATE EXTENSION pg_trgm` as the Neon database owner | `rollback/2026-10-16-v2-search-buildings.down.sql` |
+| 4 | `2026-10-16-v2-workflow-assistant.sql` (#21, stacked on #24) | nothing (the new tables aren't cache domains) | `rollback/2026-10-16-v2-workflow-assistant.down.sql` |
 
 Apply in this order, and roll back in reverse. Each file is additive, idempotent (safe to re-run) and wrapped in one
 transaction.
@@ -74,6 +75,8 @@ verifies this on a database without the V2 migrations:
 1. **Code first:** revert the merge commits on `main` in reverse order (#24, #23, #22). Vercel redeploys.
 2. **Schema only if needed.** The pre-V2 code ignores the new objects, so leaving them is safe. To remove them, run
    these in order:
+   - `rollback/2026-10-16-v2-workflow-assistant.down.sql` (#21), which drops pending reminders, drafts and
+     reassessment jobs, so back them up first if they should be kept;
    - `rollback/2026-10-16-v2-search-buildings.down.sql`, which drops building geometry and its history, so back it up
      first if any was entered;
    - `rollback/2026-10-16-v2-rate-limits.down.sql`;
