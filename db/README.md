@@ -2,7 +2,8 @@
 
 Every schema or reference-data change is a SQL file in `db/migrations/`. When a file reaches `main`, GitHub Actions
 ([.github/workflows/deploy-neon-db.yml](../.github/workflows/deploy-neon-db.yml)) applies it to the Neon preview/demo
-database. Nobody runs SQL on Neon by hand any more.
+database. Nobody runs SQL on Neon by hand any more. See [Deployment policy](#deployment-policy) for what runs
+automatically and what needs approval.
 
 ## Structure
 
@@ -35,7 +36,7 @@ It reads `DATABASE_URL` (or `NEON_DATABASE_URL`), never `.env`, and never prints
 |---|---|
 | `npm run db:migrate` | apply pending migrations to `DATABASE_URL` (must be localhost unless you pass `-- --allow-remote`) |
 | `npm run db:new -- add-building-floors` | create `db/migrations/<local timestamp>-add-building-floors.sql` |
-| `npm run db:diff` | show schema changes in your local DB that no migration contains yet |
+| `npm run db:diff` | show schema changes in your local DB that no migration contains yet (local only) |
 
 PowerShell: `$env:DATABASE_URL = "postgresql://postgres:<password>@127.0.0.1:5432/seefixdb"; npm run db:migrate`
 Bash: `DATABASE_URL=postgresql://postgres:<password>@127.0.0.1:5432/seefixdb npm run db:migrate`
@@ -76,9 +77,11 @@ Git only sees files. It can't tell that you ran `ALTER TABLE` in pgAdmin. To fin
 DATABASE_URL=postgresql://postgres:<password>@127.0.0.1:5432/<your-db> npm run db:diff
 ```
 
-It builds a scratch database (`<your-db>_diff_scratch`) from `db/migrations`, runs `pg_dump --schema-only` (schema
-`dbo`) on both databases and prints a `git diff`. `+` lines exist only in your database: copy them into a new migration.
-Data changes are not compared. Requires `pg_dump` and `git` on `PATH`. The scratch database is dropped afterwards.
+It creates a scratch database with a random name (`<your-db>_diff_<12 hex>`) and builds it from `db/migrations`.
+It then runs `pg_dump --schema-only` (schema `dbo`) on both databases and prints a `git diff`. `+` lines exist only
+in your database: copy them into a new migration. Data changes are not compared. Requires `pg_dump` and `git` on
+`PATH`. Only the scratch database it created itself is dropped, also when something fails. If the name is already
+taken, `CREATE DATABASE` fails and nothing is dropped.
 
 ## Baseline and adoption
 
@@ -105,22 +108,57 @@ first deployment or a local DB restored from a backup. The decision:
 Adoption trusts that an existing database already contains the baseline schema. Check that with `npm run db:diff`
 against a local restore if in doubt.
 
+## Deployment policy
+
+| What | When | Workflow / GitHub environment | Approval |
+|---|---|---|---|
+| Apply pending migrations (incl. destructive ones such as `DROP COLUMN`) | automatically on every push to `main` that touches `db/migrations/**` or `scripts/database/**`; also by hand via **Run workflow** | `deploy-neon-db.yml` / `neon-preview` | none: the PR review is the gate |
+| Reset: drop schema `dbo`, rebuild from baseline + migrations | only by hand | `reset-neon-db.yml` / `neon-preview-reset` | required reviewers on the environment + typed database name |
+| Pull requests | never touch Neon (no `pull_request` trigger; PR runs can't read the secret) | — | — |
+
+**Target isolation.** Both workflows give the runner the non-secret repository variables `NEON_EXPECTED_HOST` and
+`NEON_EXPECTED_DATABASE`. They run these checks before the lock, the history table or any SQL:
+
+1. In CI it fails if either variable is unset.
+2. It compares the connection string's host with `NEON_EXPECTED_HOST` before connecting.
+3. After connecting, it compares `current_database()` with `NEON_EXPECTED_DATABASE`.
+4. On a mismatch it fails with "Target check failed ... Nothing was changed".
+
+Only the verified host and database name are printed (`Target verified: <host> / <db>`). A secret pointing at another
+Neon project/branch, or at production later, therefore fails instead of being migrated. The same checks run locally
+when `MIGRATE_EXPECTED_HOST` / `MIGRATE_EXPECTED_DATABASE` are set.
+
+**Secrets live only in the environments**, never as a repository secret. If the reset environment hasn't been set up
+(and protected), its job has no `NEON_DATABASE_URL` and fails at "Validate configuration". GitHub creates a missing
+environment *without* protection on first use, so create `neon-preview-reset` with reviewers **before** adding the
+secret to it.
+
 ## Reset (deliberate, destructive)
 
-Actions → **Deploy Neon database** → **Run workflow** → tick `reset` and type the Neon database name (e.g. `neondb`)
-in `confirm_database`. Under the migration lock this runs `DROP SCHEMA dbo CASCADE` (all data is lost, including
-the history), then applies the baseline and every migration. A wrong or empty name fails the run before anything is
-dropped. Pushes never reset. Locally: `npm run db:migrate -- --reset --confirm <database>`.
+Actions → **Reset Neon database** → **Run workflow** → type the database name (it must equal the database you are
+connected to, i.e. `NEON_EXPECTED_DATABASE`). A required reviewer approves the `neon-preview-reset` deployment. Then,
+under the migration lock, the job runs `DROP SCHEMA dbo CASCADE` (all data is lost, including the history) and applies
+the baseline and every migration. A wrong name fails before anything is dropped. Pushes never reset.
+Locally: `npm run db:migrate -- --reset --confirm <database>`.
 
 ## One-time setup (owner)
 
-1. In the Neon console open the project → **Connect** → choose the branch/database → turn **Connection pooling OFF**,
-   and copy the connection string. Its host must **not** contain `-pooler`. Make sure it ends with `?sslmode=require`,
-   for example `postgresql://<user>:<password>@ep-xxxx.<region>.aws.neon.tech/neondb?sslmode=require`.
-2. GitHub → `seefixmanagement/seefix-api` → **Settings → Secrets and variables → Actions → New repository secret**:
-   name `NEON_DATABASE_URL`, value = that string → **Add secret**.
-3. Actions → **Deploy Neon database** → **Run workflow** (leave `reset` unticked). The first run adopts the existing
-   schema. After that, every merge to `main` that touches `db/migrations/` deploys by itself.
+1. **Connection string.** Neon console → project → **Connect** → choose the branch/database → turn
+   **Connection pooling OFF** → copy the string. Its host must **not** contain `-pooler`. Make sure it ends with
+   `?sslmode=require`, e.g. `postgresql://<user>:<password>@ep-xxxx.<region>.aws.neon.tech/neondb?sslmode=require`.
+2. **Repository variables** (not secret): GitHub → `seefixmanagement/seefix-api` → **Settings → Secrets and
+   variables → Actions → Variables → New repository variable**:
+   - `NEON_EXPECTED_HOST` = the host part of that string (e.g. `ep-xxxx.<region>.aws.neon.tech`);
+   - `NEON_EXPECTED_DATABASE` = the database name (e.g. `neondb`).
+3. **Environment `neon-preview`** (ordinary migrations): **Settings → Environments → New environment** →
+   `neon-preview`. No required reviewers, so pushes stay zero-blocker. Optionally limit
+   *Deployment branches* to `main`. Under *Environment secrets* → **Add secret** `NEON_DATABASE_URL` = the string from step 1.
+4. **Environment `neon-preview-reset`** (destructive): **New environment** → `neon-preview-reset` → tick
+   **Required reviewers** and add yourself (and the tech lead) → *Deployment branches*: `main` → **Save protection
+   rules**. Then add the environment secret `NEON_DATABASE_URL` with the same value.
+5. Do **not** create a repository-level `NEON_DATABASE_URL`. Delete one if you already added it.
+6. Actions → **Deploy Neon database** → **Run workflow**. The first run checks the target and adopts the existing
+   schema. After that every merge to `main` that touches `db/migrations/` deploys by itself.
 
 **Why the direct (non-pooler) string:** the `-pooler` endpoint is PgBouncer in *transaction* mode. Each transaction can
 land on a different server connection, so a session-level `pg_advisory_lock` taken on one connection doesn't protect
@@ -128,5 +166,5 @@ the next statements, and can stay held on a pooled connection that another clien
 session-level advisory locks among the features pooled connections don't support. The runner needs one real
 session for the whole run, so it refuses a `-pooler` host.
 
-The secret only reaches the job as the `DATABASE_URL` environment variable. GitHub masks it in logs, the workflow
-never runs on `pull_request` (forks and PR branches can't reach Neon), and its token is `contents: read`.
+The secret only reaches the job as the `DATABASE_URL` environment variable. GitHub masks it in logs, the workflows
+never run on `pull_request` (forks and PR branches can't reach Neon), and their token is `contents: read`.

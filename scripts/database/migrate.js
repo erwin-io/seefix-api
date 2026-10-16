@@ -169,6 +169,7 @@ export async function migrate({
   environment = "local",
   reset = false,
   confirm = "",
+  expect = null, // { host, database }: refuse any other target (CI passes the repo variables)
   log = console.log,
 } = {}) {
   // Without this, pg would silently fall back to the PGHOST/PGDATABASE environment variables.
@@ -182,11 +183,17 @@ export async function migrate({
   client.on("notice", () => {});
   let connected = false;
   try {
+    const host = new URL(connectionString).hostname;
+    if (expect && host !== expect.host) throw new Error("Target check failed: the connection host is not NEON_EXPECTED_HOST. Nothing was changed.");
     await client.connect();
     connected = true;
     const { rows: [{ db }] } = await client.query("SELECT current_database() AS db");
     log("Connection successful.");
     log(`Database: ${db}`);
+    if (expect) {
+      if (db !== expect.database) throw new Error(`Target check failed: connected database "${db}" is not NEON_EXPECTED_DATABASE. Nothing was changed.`);
+      log(`Target verified: ${host} / ${db}`);
+    }
 
     const { rows: [{ locked }] } = await client.query(`SELECT pg_try_advisory_lock(${LOCK}) AS locked`);
     if (!locked) {
@@ -258,7 +265,7 @@ export async function migrate({
     return stats;
   } catch (error) {
     stats.failed = Math.max(stats.failed, 1);
-    log(connected ? `Error: ${error.message}` : `Connection failed: ${error.code || ""} ${error.message}`.trim());
+    log(connected || error.message.startsWith("Target check") ? `Error: ${error.message}` : `Connection failed: ${error.code || ""} ${error.message}`.trim());
     return stats;
   } finally {
     // Ending the session releases the advisory lock.
@@ -307,8 +314,19 @@ async function main(argv) {
     console.error("Refusing to migrate a non-local database from a workstation. Pass --allow-remote if you really mean it.");
     return 1;
   }
+  const expect = { host: process.env.MIGRATE_EXPECTED_HOST, database: process.env.MIGRATE_EXPECTED_DATABASE };
+  if (process.env.CI === "true" && !(expect.host && expect.database)) {
+    console.error("Target check failed: set the repository variables NEON_EXPECTED_HOST and NEON_EXPECTED_DATABASE (see db/README.md).");
+    return 1;
+  }
   const environment = process.env.MIGRATE_ENVIRONMENT || (local ? "local" : "remote");
-  const stats = await migrate({ connectionString, environment, reset: arg("--reset"), confirm: arg("--confirm") ? value("--confirm") : "" });
+  const stats = await migrate({
+    connectionString,
+    environment,
+    reset: arg("--reset"),
+    confirm: arg("--confirm") ? value("--confirm") : "",
+    expect: expect.host || expect.database ? expect : null,
+  });
   writeSummary(stats, environment);
   return stats.failed ? 1 : 0;
 }

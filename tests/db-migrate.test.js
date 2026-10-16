@@ -11,6 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import pg from "pg";
+import { scratchName, schemaDiff, withScratchDatabase } from "../scripts/database/schema-diff.js";
 import { MIGRATIONS_DIR, checksum, listMigrations, migrate, splitSql, transactionStatements } from "../scripts/database/migrate.js";
 
 test("splitSql ignores semicolons and BEGIN/COMMIT inside comments, strings and dollar quotes", () => {
@@ -40,6 +41,13 @@ test("the baseline sorts first and every migration file splits cleanly", () => {
   assert.match(files[0], /^0000_baseline_dbo\.sql$/);
   for (const f of files) assert.ok(splitSql(fs.readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")).length > 0, f);
   assert.equal(checksum("a\nb"), checksum("a\r\nb".replace(/\r\n/g, "\n")));
+});
+
+test("db:diff scratch names are unique per run and safe to quote", () => {
+  const url = "postgresql://u:p@127.0.0.1/Seefix-Dev";
+  const [a, b] = [scratchName(url), scratchName(url)];
+  assert.notEqual(a, b);
+  assert.match(a, /^seefix_dev_diff_[0-9a-f]{12}$/);
 });
 
 const adminUrl = process.env.SEEFIX_MIGRATE_TEST_URL;
@@ -202,4 +210,35 @@ test("live: an existing database restored from a dump is adopted, not replayed",
   assert.deepEqual(history.map((h) => h.Adopted), history.map((h) => adoptable(h.Filename)));
   assert.deepEqual(await q(url, `SELECT (SELECT count(*)::int FROM "dbo"."Reports") reports, (SELECT count(*)::int FROM "dbo"."Users") users`), before);
   assert.equal((await q(url, `SELECT count(*)::int n FROM "dbo"."Buildings"`))[0].n, 8);
+});
+
+test("live: the target check refuses another database or host before changing anything", { skip }, async (t) => {
+  const { url, db } = await freshDb(t, "target");
+  const wrongDb = await run(url, migrationsDir(t), { expect: { host: "127.0.0.1", database: "neondb" } });
+  assert.equal(wrongDb.stats.failed, 1);
+  assert.match(wrongDb.out, /Target check failed: connected database "seefix_migrate_test_target" is not NEON_EXPECTED_DATABASE/);
+  const wrongHost = await run(url, migrationsDir(t), { expect: { host: "ep-other.neon.tech", database: db } });
+  assert.match(wrongHost.out, /Error: Target check failed: the connection host is not NEON_EXPECTED_HOST/);
+  assert.equal((await q(url, `SELECT to_regnamespace('dbo') r`))[0].r, null, "nothing may be created");
+  const ok = await run(url, migrationsDir(t), { expect: { host: "127.0.0.1", database: db } });
+  assert.equal(ok.stats.failed, 0, ok.out);
+  assert.match(ok.out, /Target verified: 127\.0\.0\.1 \/ seefix_migrate_test_target/);
+});
+
+test("live: db:diff never drops a database it did not create", { skip }, async (t) => {
+  // Pre-existing databases: one under the old fixed scratch name, one under the exact name we ask for.
+  const { url } = await freshDb(t, "diffsrc");
+  const legacy = await freshDb(t, "diffsrc_diff_scratch");
+  const taken = await freshDb(t, "diffsrc_diff_taken");
+  for (const d of [legacy, taken]) await q(d.url, "CREATE TABLE keep_me (id int); INSERT INTO keep_me VALUES (1)");
+  const dbs = async () => (await admin("SELECT datname FROM pg_database WHERE datname LIKE 'seefix_migrate_test_diffsrc%' ORDER BY 1")).rows.map((r) => r.datname);
+  const before = await dbs();
+
+  await assert.rejects(withScratchDatabase(url, "seefix_migrate_test_diffsrc_diff_taken", async () => assert.fail("must not run")), /already exists/);
+  await assert.rejects(withScratchDatabase(url, scratchName(url), async () => { throw new Error("boom"); }), /boom/);
+  await run(url, migrationsDir(t));
+  await schemaDiff(url);
+
+  assert.deepEqual(await dbs(), before, "no scratch database left behind, none dropped");
+  for (const d of [legacy, taken]) assert.deepEqual(await q(d.url, "SELECT id FROM keep_me"), [{ id: 1 }]);
 });

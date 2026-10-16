@@ -1,0 +1,42 @@
+# DESTRUCTIVE: drops schema dbo on the Neon preview/demo database and rebuilds it from the baseline + migrations.
+# Manual only. Environment `neon-preview-reset` should have required reviewers (db/README.md, "Deployment policy").
+name: Reset Neon database
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_database:
+        description: 'Type the Neon database name exactly (must equal NEON_EXPECTED_DATABASE). ALL DATA IS LOST.'
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: neon-db
+  cancel-in-progress: false
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: neon-preview-reset
+    env:
+      DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      MIGRATE_EXPECTED_HOST: ${{ vars.NEON_EXPECTED_HOST }}
+      MIGRATE_EXPECTED_DATABASE: ${{ vars.NEON_EXPECTED_DATABASE }}
+      MIGRATE_ENVIRONMENT: Neon preview/demo (RESET)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Validate configuration
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::Secret NEON_DATABASE_URL is not set in environment neon-preview-reset (see db/README.md)."
+            exit 1
+          fi
+      - name: Reset and rebuild
+        env:
+          CONFIRM_DATABASE: ${{ inputs.confirm_database }}
+        run: node scripts/database/migrate.js --reset --confirm "$CONFIRM_DATABASE"
