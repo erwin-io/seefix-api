@@ -30,6 +30,12 @@ DOWN=(
   db/migrations/rollback/2026-10-16-v2-rate-limits.down.sql
   db/migrations/rollback/2026-10-16-v2-cache-domain-versions.down.sql
 )
+# Optional: rehearse only some migrations, e.g. REHEARSAL_MIGRATIONS="2026-10-16-v2-workflow-assistant" on a copy that
+# already has the earlier ones (names without .sql, applied in the given order, rolled back in reverse).
+if [ -n "${REHEARSAL_MIGRATIONS:-}" ]; then
+  UP=(); DOWN=()
+  for m in $REHEARSAL_MIGRATIONS; do UP+=("db/migrations/$m.sql"); DOWN=("db/migrations/rollback/$m.down.sql" "${DOWN[@]}"); done
+fi
 work="$(mktemp -d)"
 # Options before the connection string: Windows psql ignores options placed after it.
 psql_run() { psql -v ON_ERROR_STOP=1 -q -X "$@" -d "$url"; }
@@ -46,8 +52,10 @@ psql_run -At -c "SELECT 'domains=' || COUNT(*) FROM \"dbo\".\"CacheDomainVersion
                  SELECT 'rate-limit table=' || to_regclass('\"dbo\".\"RateLimitBuckets\"')::text;
                  SELECT 'geometry history table=' || to_regclass('\"dbo\".\"BuildingGeometryHistory\"')::text;"
 # Hard check that the migrations really took effect (guards against a silent no-op run).
-installed="$(psql_run -At -c "SELECT (to_regclass('\"dbo\".\"CacheDomainVersions\"') IS NOT NULL)::int + (to_regclass('\"dbo\".\"RateLimitBuckets\"') IS NOT NULL)::int + (to_regclass('\"dbo\".\"BuildingGeometryHistory\"') IS NOT NULL)::int")"
-if [ "$installed" != "3" ]; then echo "FAIL: migrations did not apply (found $installed of 3 V2 tables)." >&2; exit 1; fi
+if [ -z "${REHEARSAL_MIGRATIONS:-}" ]; then
+  installed="$(psql_run -At -c "SELECT (to_regclass('\"dbo\".\"CacheDomainVersions\"') IS NOT NULL)::int + (to_regclass('\"dbo\".\"RateLimitBuckets\"') IS NOT NULL)::int + (to_regclass('\"dbo\".\"BuildingGeometryHistory\"') IS NOT NULL)::int + (to_regclass('\"dbo\".\"AssistantReminders\"') IS NOT NULL)::int")"
+  if [ "$installed" != "4" ]; then echo "FAIL: migrations did not apply (found $installed of 4 V2 tables)." >&2; exit 1; fi
+fi
 schema "$work/migrated.sql"
 if diff -q "$work/before.sql" "$work/migrated.sql" > /dev/null; then echo "FAIL: migrated schema equals the starting schema." >&2; exit 1; fi
 for f in "${DOWN[@]}"; do echo "rollback $f"; psql_run -f "$f"; done
