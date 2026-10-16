@@ -22,8 +22,10 @@ UP=(
   db/migrations/2026-10-16-v2-cache-domain-versions.sql
   db/migrations/2026-10-16-v2-rate-limits.sql
   db/migrations/2026-10-16-v2-search-buildings.sql
+  db/migrations/2026-10-16-v2-workflow-assistant.sql
 )
 DOWN=(
+  db/migrations/rollback/2026-10-16-v2-workflow-assistant.down.sql
   db/migrations/rollback/2026-10-16-v2-search-buildings.down.sql
   db/migrations/rollback/2026-10-16-v2-rate-limits.down.sql
   db/migrations/rollback/2026-10-16-v2-cache-domain-versions.down.sql

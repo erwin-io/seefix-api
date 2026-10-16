@@ -2,7 +2,7 @@
  * Assessment work (initial report AI, completion AI) is queued in the database, never pushed to the Agent:
  * the API saves PENDING rows, the Agent claims them, seefix-worker's agent-retry job re-queues failures.
  * Interactive previews (maintenance request draft, procurement package, work order preview/review,
- * clarification draft) and /health stay direct calls on purpose.
+ * clarification draft), the assistant's fact-only phrasing call and /health stay direct calls on purpose.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +16,7 @@ test("the Agent client exposes no assessment trigger or status call", () => {
     assert.equal(agentClient[name], undefined, `${name} must not exist`);
   }
   assert.deepEqual(Object.keys(agentClient).sort(), [
-    "draftClarification", "generateMaintenanceRequest", "health", "previewInternalWorkOrder",
+    "assistantRespond", "draftClarification", "generateMaintenanceRequest", "health", "previewInternalWorkOrder",
     "previewProcurementPackage", "previewProcurementWorkOrder", "reviewWorkOrder", "runMonitor",
   ]);
 });
@@ -25,6 +25,12 @@ test("report creation, completion submission and both status routes don't call t
   for (const file of ["services/report-service.js", "routes/reports.js", "routes/work-orders.js"]) {
     assert.doesNotMatch(src(file), /agent-client\.js|agentClient|bestEffort/, `${file} must use the database queue only`);
   }
+});
+
+test("assessment regeneration is queued in PostgreSQL; the assistant only calls the Agent to phrase facts", () => {
+  const assistant = src("services/assistant-service.js");
+  assert.deepEqual([...assistant.matchAll(/agentClient\.(\w+)/g)].map((m) => m[1]), ["assistantRespond"]);
+  assert.match(assistant, /INSERT INTO "dbo"\."AssessmentRegenerationJobs"/);
 });
 
 test("status routes answer from the database", () => {
