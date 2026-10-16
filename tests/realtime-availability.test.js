@@ -24,6 +24,8 @@ const call = (path, body) => new Promise((resolve) => {
 console.log(JSON.stringify({
   config: await call("/config"),
   auth: await call("/auth", { socket_id: "123.456", channel_name: "private-user-${USER}" }),
+  ownRole: await call("/auth", { socket_id: "123.456", channel_name: "private-role-ADMIN" }),
+  otherRole: await call("/auth", { socket_id: "123.456", channel_name: "private-role-WORKER" }),
 }));
 process.exit(0);`;
 
@@ -39,7 +41,7 @@ function run(env) {
 test("PUSHER_* configured but client realtime not enabled: /config says disabled, /auth refuses (clients poll)", () => {
   for (const env of [PUSHER, { ...PUSHER, OUTBOX_DISPATCHER: "on" }, { ...PUSHER, REALTIME_CLIENTS_ENABLED: "yes" }]) {
     const r = run(env);
-    assert.deepEqual(r.config.body, { enabled: false, key: null, cluster: null, userChannel: `private-user-${USER}` }, JSON.stringify(env));
+    assert.deepEqual(r.config.body, { enabled: false, key: null, cluster: null, userChannel: `private-user-${USER}`, roleChannel: "private-role-ADMIN" }, JSON.stringify(env));
     assert.deepEqual([r.auth.status, r.auth.code], [503, "REALTIME_DISABLED"]);
   }
 });
@@ -54,8 +56,10 @@ test("deliberately enabled (credentials + REALTIME_CLIENTS_ENABLED=on): advertis
   // Works whether this instance dispatches or a dedicated `npm run outbox:dispatch` worker does.
   for (const env of [{ ...PUSHER, REALTIME_CLIENTS_ENABLED: "on" }, { ...PUSHER, REALTIME_CLIENTS_ENABLED: "on", OUTBOX_DISPATCHER: "off" }]) {
     const r = run(env);
-    assert.deepEqual(r.config.body, { enabled: true, key: "pk_test", cluster: "ap1", userChannel: `private-user-${USER}` });
+    assert.deepEqual(r.config.body, { enabled: true, key: "pk_test", cluster: "ap1", userChannel: `private-user-${USER}`, roleChannel: "private-role-ADMIN" });
     assert.equal(r.auth.status, 200);
+    assert.equal(r.ownRole.status, 200, "own role channel (cache-change hints)");
+    assert.deepEqual([r.otherRole.status, r.otherRole.code], [403, "FORBIDDEN"], "another role's channel");
     assert.deepEqual(Object.keys(r.auth.body), ["auth"]);
     assert.ok(!JSON.stringify(r).includes("sk_test_secret"));
   }

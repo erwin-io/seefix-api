@@ -36,6 +36,9 @@ confirm a row reaches `SENT`, then set `REALTIME_CLIENTS_ENABLED=on` on the API 
   aggregates resolve their parent from the DB. A legacy `ChannelName` (`report-{id}`, `work-order-{id}`) is accepted
   only when it names that same channel; any mismatch or unrecognised name fails closed. Unroutable rows become `FAILED`, never
   broadcast. `/api/realtime/auth` applies the same rules as `GET /api/reports/:id` (`canSubscribe`).
+- **Role channels:** `private-role-<ROLE>` carries only `data.changed` cache-version hints (published by seefix-worker
+  `cache-change-hints`, docs/V2_CACHE_SYNC.md §6). `/api/realtime/auth` signs it only for the caller's own role, and only
+  for roles allowed to read `GET /api/sync/versions` (`src/realtime/role-channels.js`).
 
 ## Stale events: policy, observability, cleanup
 - **Deliberate:** events older than `OUTBOX_MAX_AGE_MINUTES` stay `PENDING` and are never sent. A realtime event
@@ -82,7 +85,8 @@ Stop and review before enabling if a payload carries free text or personal data:
 - [ ] Trigger one notification for test user A. In the Pusher debug console it appears on `private-user-{A}` only, and its row
       becomes `SENT` with `AttemptCount=1`.
 - [ ] As user B, `POST /api/realtime/auth` for `private-user-{A}`, a report/work order/handoff that B cannot GET, and a
-      nonexistent id. All return **403**. The same call for B's own channel returns 200.
+      nonexistent id, and another role's `private-role-<ROLE>`. All return **403**. The same call for B's own channel (and own
+      role channel, staff roles only) returns 200.
 - [ ] Watch for one hour: `SELECT "Status",COUNT(*) FROM dbo."OutboxEvents" WHERE "Transport"='PUSHER' AND "CreatedAt">NOW()-interval '1 hour' GROUP BY 1;`
       Expect no `FAILED` rows and no `PROCESSING` rows older than the lease (60 s).
 - [ ] Duplicate delivery is understood. If the instance is killed between a Pusher accept and the `SENT` write, the row is re-sent
