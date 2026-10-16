@@ -56,7 +56,7 @@ router.get("/", WORK_ROLES, cachedGet({ domains: ["work_orders", "reports"], sco
   try {
     const paging = pageParams(req.query);
     const r = await query(
-      `SELECT wo."Id" AS id,wo."WorkOrderNo" AS "workOrderNo",wo."Status" AS status,wo."AssignedPartyName" AS "assignedPartyName",wo."ResponsibleLeadName" AS "responsibleLeadName",wo."PlannedStartAt" AS "plannedStartAt",wo."Deadline" AS deadline,wo."CompletionAgentStatus" AS "completionAgentStatus",r."ReportNo" AS "reportNo",mr."RequestNo" AS "requestNo" FROM "dbo"."WorkOrders" wo JOIN "dbo"."Reports" r ON r."Id"=wo."ReportId" JOIN "dbo"."MaintenanceRequests" mr ON mr."Id"=wo."MaintenanceRequestId" WHERE ($1::text IS NULL OR wo."Status"=$1) AND ($2::uuid IS NULL OR wo."ResponsibleLeadUserId"=$2) ORDER BY wo."CreatedAt" DESC, wo."Id" DESC LIMIT $3 OFFSET $4`,
+      `SELECT wo."Id" AS id,wo."WorkOrderNo" AS "workOrderNo",wo."Status" AS status,wo."AssignedPartyName" AS "assignedPartyName",wo."ResponsibleLeadName" AS "responsibleLeadName",wo."PlannedStartAt" AS "plannedStartAt",wo."Deadline" AS deadline,wo."CompletionAgentStatus" AS "completionAgentStatus",wo."CreatedAt" AS "createdAt",r."ReportNo" AS "reportNo",mr."RequestNo" AS "requestNo" FROM "dbo"."WorkOrders" wo JOIN "dbo"."Reports" r ON r."Id"=wo."ReportId" JOIN "dbo"."MaintenanceRequests" mr ON mr."Id"=wo."MaintenanceRequestId" WHERE ($1::text IS NULL OR wo."Status"=$1) AND ($2::uuid IS NULL OR wo."ResponsibleLeadUserId"=$2) ORDER BY wo."CreatedAt" DESC, wo."Id" DESC LIMIT $3 OFFSET $4`,
       [
         req.query.status || null,
         req.user.role === "WORKER" ? req.user.id : null,
