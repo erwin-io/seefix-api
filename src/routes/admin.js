@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { config } from "../config.js";
 import { query } from "../database.js";
 import { ApiError } from "../errors.js";
+import { cachedGet } from "../cache/response-cache.js";
+import { pageParams, pageResult } from "../utils/pagination.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { optionalUsername, requireEmail, requirePassword, publicUser } from '../services/account-validation.js';
 import { issueChallenge, deliverChallenge } from '../services/account-challenges.js';
@@ -20,8 +22,9 @@ const VALID_ROLES = new Set([
   "ADMIN",
 ]);
 
-router.get("/users", async (_req, res, next) => {
+router.get("/users", cachedGet({ domains: ["users"] }), async (req, res, next) => {
   try {
+    const paging = pageParams(req.query);
     const result = await query(
       `SELECT
          "Id" AS id,
@@ -40,10 +43,12 @@ router.get("/users", async (_req, res, next) => {
          "CreatedAt" AS "createdAt",
          "UpdatedAt" AS "updatedAt"
        FROM "dbo"."Users"
-       ORDER BY "CreatedAt" DESC`,
+       ORDER BY "CreatedAt" DESC, "Id" DESC
+       LIMIT $1 OFFSET $2`,
+      [paging?.limit ?? null, paging?.offset ?? 0],
     );
 
-    res.json({ items: result.rows });
+    res.json(paging ? pageResult(result.rows, paging) : { items: result.rows });
   } catch (error) {
     next(error);
   }

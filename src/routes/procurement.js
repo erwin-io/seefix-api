@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { query, withTransaction } from "../database.js";
 import { ApiError } from "../errors.js";
+import { cachedGet } from "../cache/response-cache.js";
+import { pageParams, pageResult } from "../utils/pagination.js";
 import { requireAuth, requireRoles } from "../middleware/auth.js";
 import { agentClient, bestEffort } from "../agent-client.js";
 import { notifyRole } from "../services/notifications.js";
@@ -20,17 +22,21 @@ const ACCESS = requireRoles(
   "ADMIN",
 );
 
-router.get("/inbox", ACCESS, async (_req, res, next) => {
+router.get("/inbox", ACCESS, cachedGet({ domains: ["procurement", "reports", "reference"] }), async (req, res, next) => {
   try {
+    const paging = pageParams(req.query);
     const result = await query(
       `SELECT *
        FROM "dbo"."v_ProcurementInbox"
        ORDER BY
          "LivePriorityScore" DESC NULLS LAST,
-         "SubmittedAt" ASC`,
+         "SubmittedAt" ASC,
+         "HandoffId"
+       LIMIT $1 OFFSET $2`,
+      [paging?.limit ?? null, paging?.offset ?? 0],
     );
 
-    res.json({ items: result.rows });
+    res.json(paging ? pageResult(result.rows, paging) : { items: result.rows });
   } catch (error) {
     next(error);
   }
