@@ -54,10 +54,10 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
     const authText = await (await fetch(base + "/api/realtime/auth", { method: "POST", headers: { ...h0, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ socket_id: "1.2", channel_name: `private-user-${u0.Id}` }) })).text();
     assert.ok(config.pusherSecret.length > 0, "live run needs PUSHER_SECRET");
     for (const text of [cfgText, authText]) assert.ok(!text.includes(config.pusherSecret), "secret must not be returned");
-    assert.deepEqual(Object.keys(JSON.parse(cfgText)).sort(), ["cluster", "enabled", "key", "userChannel"]);
+    assert.deepEqual(Object.keys(JSON.parse(cfgText)).sort(), ["cluster", "enabled", "key", "roleChannel", "userChannel"]);
     assert.deepEqual(Object.keys(JSON.parse(authText)), ["auth"]);
     assert.match(JSON.parse(authText).auth, /^[^:]+:[0-9a-f]{64}$/, "auth is key:HMAC only");
-    console.log("Secret check: /config keys [cluster,enabled,key,userChannel], /auth keys [auth]; secret absent from both.");
+    console.log("Secret check: /config keys [cluster,enabled,key,roleChannel,userChannel], /auth keys [auth]; secret absent from both.");
 
     const rows = [];
     const mismatches = [];
@@ -82,15 +82,24 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
       const foreign = await fetch(base + "/api/realtime/auth", { method: "POST", headers: { ...auth, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ socket_id: "1.2", channel_name: `private-user-${other.Id}` }) });
       rows.push({ role: u.Role, type: "user", id: "own/other", rest: "-", realtime: `${own.status}/${foreign.status}` });
       if (own.status !== 200 || foreign.status !== 403) mismatches.push(rows.at(-1));
+      // Role channels (cache-change hints): own role iff GET /api/sync/versions is allowed; never another role's.
+      const versions = (await fetch(base + "/api/sync/versions", { headers: auth })).status;
+      for (const role of ROLES) {
+        const rt = (await fetch(base + "/api/realtime/auth", { method: "POST", headers: { ...auth, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ socket_id: "1.2", channel_name: `private-role-${role}` }) })).status;
+        const expected = role === u.Role && versions === 200;
+        rows.push({ role: u.Role, type: "role", id: role, rest: role === u.Role ? versions : "-", realtime: rt });
+        if ((rt === 200) !== expected) mismatches.push(rows.at(-1));
+      }
     }
     // Scoped roles must show both an allowed and a denied record, or the parity check proves nothing for them.
     const unproven = ["WORKER", "REPORTER", "PROCUREMENT"].filter((role) => {
-      const r = rows.filter((x) => x.role === role && x.type !== "user");
+      const r = rows.filter((x) => x.role === role && x.type !== "user" && x.type !== "role");
       return !r.some((x) => x.realtime === 200) || !r.some((x) => x.realtime !== 200);
     });
     assert.deepEqual(unproven, [], `scoped roles need positive and negative examples; missing for: ${unproven.join(", ")}`);
     const summary = {};
     for (const r of rows) {
+      if (r.type === "role") continue;
       const k = `${r.role} ${r.type}`;
       summary[k] ??= { allowed: 0, denied: 0 };
       if (r.type === "user") summary[k] = r.realtime;
@@ -98,6 +107,7 @@ test("live: realtime channel auth matches REST read access", { skip: !live && "s
     }
     console.log(`ACL parity: ${users.length} roles x ${cases.length} records; mismatches=${mismatches.length}`);
     console.table(summary);
+    console.log("Role channels allowed:", users.map((u) => `${u.Role}=[${rows.filter((x) => x.role === u.Role && x.type === "role" && x.realtime === 200).map((x) => x.id).join(",")}]`).join(" "));
     assert.deepEqual(mismatches, [], "realtime auth must equal REST read access");
   } finally {
     server.close();

@@ -127,19 +127,23 @@ The list routes above accept `?page=1&pageSize=200`:
 | Users | users |
 | Dashboard | every domain the role receives |
 
-## 6. Realtime change hints (proposal for seefix-worker#3)
+## 6. Realtime change hints (seefix-worker#3)
 
-The versions table is itself the durable change log. Proposal:
-- **Publisher.** seefix-worker polls `dbo."CacheDomainVersions"` (one tiny query every ~2 s) and, when a domain's
-  version rises, publishes `data.changed { "versions": { "<domain>": <version> } }` to each role channel allowed to
-  see that domain.
-- **Restart-safe.** After a restart it republishes the current versions once. The hint is idempotent.
-- **No extra rows.** Business transactions write nothing more to OutboxEvents.
-- **Channels.** The proposed names are `private-role-<ROLE>`. `/api/realtime/auth` would authorize them by
-  `req.user.role` alone. That change ships together with the Worker change, not in this PR.
+The versions table is itself the durable change log; business transactions write nothing extra to OutboxEvents.
+
+- **Publisher.** seefix-worker job `cache-change-hints` (`JOB_CACHE_CHANGE_HINTS=on`) reads `dbo."CacheDomainVersions"`
+  every ~2 s. When domains rose, it publishes `data.changed { "versions": { "<domain>": <version>, ... } }` to each
+  role channel allowed to see those domains (`DOMAINS_BY_ROLE` above, the same filter as `GET /api/sync/versions`).
+- **Restart-safe and idempotent.** After a (re)start it publishes the current versions once. A repeated hint is harmless:
+  clients compare numbers.
+- **Channels.** `private-role-<ROLE>` for the five staff roles. `/api/realtime/auth` signs one only for the caller's own
+  current role (`req.user.role`, re-read from the database on each request); another role's channel, a REPORTER, an
+  unknown role or a malformed name gets 403 (`src/realtime/role-channels.js`). `GET /api/realtime/config` returns it as
+  `roleChannel` (`null` for REPORTER). A role change takes effect for new subscriptions; an already-open socket keeps the
+  old role channel until it reconnects, which only exposes domain numbers the user could read moments earlier.
 
 The hint carries only domain names and numbers: no record data. Clients treat it as "check `/api/sync/versions`
-now", and the REST poll stays the authority.
+now", and the REST poll stays the authority, also when the socket is connected but the publisher is down.
 
 ## 7. Evidence (local PostgreSQL 16 copy of the 2026-10-13 backup + Oct 14 migration)
 
