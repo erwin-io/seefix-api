@@ -33,7 +33,9 @@ DOWN=(
 work="$(mktemp -d)"
 # Options before the connection string: Windows psql ignores options placed after it.
 psql_run() { psql -v ON_ERROR_STOP=1 -q -X "$@" -d "$url"; }
-schema() { pg_dump --dbname="$url" --schema-only --schema=dbo --no-owner --no-privileges | grep -v '^-- Dumped' > "$1"; }
+# pg_dump 17.6+/18 wraps every dump in \restrict / \unrestrict lines with a random key; ignore them in comparisons.
+# The bracket form avoids escaping a backslash: Git Bash on Windows rewrites backslashes in arguments.
+schema() { pg_dump --dbname="$url" --schema-only --schema=dbo --no-owner --no-privileges | grep -v -e '^-- Dumped' -e '^[\]restrict ' -e '^[\]unrestrict ' > "$1"; }
 
 echo "Target: $target"
 schema "$work/before.sql"
